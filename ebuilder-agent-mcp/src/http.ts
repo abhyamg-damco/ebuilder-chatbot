@@ -8,7 +8,16 @@ import { loadConfig } from "./config.js";
 import { createEBuilderMcpServer } from "./server.js";
 
 const config = loadConfig();
-const app = createMcpExpressApp();
+
+/**
+ * createMcpExpressApp() defaults to localhost-only Host validation, which rejects
+ * Cloud Run hostnames. Bind to 0.0.0.0 and optionally restrict via MCP_ALLOWED_HOSTS.
+ */
+const app = createMcpExpressApp(
+  config.allowedHosts?.length
+    ? { host: "0.0.0.0", allowedHosts: config.allowedHosts }
+    : { host: "0.0.0.0" }
+);
 
 /** Optional bearer auth for the MCP HTTP endpoint. */
 function isAuthorized(authHeader: string | undefined): boolean {
@@ -60,12 +69,22 @@ app.post("/mcp", async (req, res) => {
   }
 });
 
+app.get("/", (_req, res) => {
+  res.json({
+    server: "ebuilder-construct-agent-mcp",
+    endpoints: {
+      health: "/health",
+      mcp: "/mcp",
+    },
+  });
+});
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", server: "ebuilder-construct-agent-mcp" });
 });
 
 const port = config.port;
-app.listen(port, () => {
+app.listen(port, "0.0.0.0", () => {
   console.error(
     `eBuilder Construct Agent MCP (HTTP) listening on http://0.0.0.0:${port}/mcp`
   );

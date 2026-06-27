@@ -13,6 +13,8 @@ const configSchema = z.object({
   accessToken: z.string().optional(),
   port: z.coerce.number().int().positive().default(8080),
   mcpApiKey: z.string().optional(),
+  /** Hostnames permitted in the HTTP Host header (comma-separated in MCP_ALLOWED_HOSTS). */
+  allowedHosts: z.array(z.string()).optional(),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;
@@ -26,6 +28,9 @@ export function loadConfig(): AppConfig {
     accessToken: process.env.EBUILDER_ACCESS_TOKEN,
     port: process.env.PORT,
     mcpApiKey: process.env.MCP_API_KEY,
+    allowedHosts: process.env.MCP_ALLOWED_HOSTS?.split(",")
+      .map((host) => host.trim())
+      .filter(Boolean),
   });
 
   if (!parsed.success) {

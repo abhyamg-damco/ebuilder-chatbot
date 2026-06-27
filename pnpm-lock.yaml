@@ -14,7 +14,7 @@ importers:
   .:
     dependencies:
       '@ai-sdk/mcp':
-        specifier: ^1.0.52
+        specifier: 1.0.52
         version: 1.0.52(zod@3.25.76)
       '@ai-sdk/openai':
         specifier: 3.0.74

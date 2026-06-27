@@ -1,0 +1,160 @@
+# Deploy ebuilder-agent-mcp (Node MCP HTTP server) to Cloud Run when the app or this workflow changes.
+name: Deploy EBuilder Agent MCP Server to Cloud Run
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - .github/workflows/deploy-mcp-server.yml
+      - .github/workflows/scripts/cloud-run-env-from-dotenv.py
+      - "ebuilder-agent-mcp/**"
+  workflow_dispatch:
+
+concurrency:
+  group: dev-deploy-ebuilder-agent-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: ${{ vars.GCP_REGION }}
+  SERVICE_NAME: dev-ebuilder-agent-mcp
+  SERVICE_ACCOUNT: ${{ vars.EBUILDER_AGENT_MCP_GCP_SERVICE_ACCOUNT_EMAIL }}
+  SECRET_NAME: DEV-EBUILDER-AGENT-MCP
+  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/uaic/dev-ebuilder-agent-mcp
+  # Must match ebuilder-agent-mcp default PORT and Dockerfile EXPOSE.
+  CLOUD_RUN_PORT: "8080"
+
+jobs:
+  setup-build-publish-deploy:
+    name: Build and Deploy EBuilder Agent MCP Server
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    environment: ebuilder-mcp
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Parse environment secrets
+        id: parse-secrets
+        run: |
+          set -euo pipefail
+
+          FULL_SECRET=$(gcloud secrets versions access latest \
+            --secret="$SECRET_NAME" \
+            --format="get(payload.data)" | base64 --decode)
+
+          if [[ -z "${FULL_SECRET//[$'\t\r\n ']}" ]]; then
+            echo "::error::Secret $SECRET_NAME decoded to empty payload; check secret exists and base64 payload."
+            exit 1
+          fi
+
+          echo "$FULL_SECRET" > /tmp/all.env
+          echo "Decoded secret byte size: $(wc -c < /tmp/all.env) (includes newlines)"
+
+          KEY_NAMES_FILE=$(mktemp)
+          COUNT=0
+
+          while IFS= read -r line; do
+            [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
+
+            KEY=${line%%=*}
+            VALUE=${line#*=}
+
+            if [[ -z "$KEY" || -z "$VALUE" ]]; then
+              echo "⚠️ skipping malformed line: $line" >&2
+              continue
+            fi
+
+            echo "$KEY=$VALUE" >> "$GITHUB_ENV"
+            echo "::add-mask::$VALUE"
+            echo "$KEY" >> "$KEY_NAMES_FILE"
+            COUNT=$((COUNT + 1))
+          done < /tmp/all.env
+
+          echo "Loaded $COUNT key(s) into GITHUB_ENV (names only, sorted):"
+          sort -u "$KEY_NAMES_FILE" | tee /tmp/env-key-names.txt
+          rm -f "$KEY_NAMES_FILE"
+
+          # YAML for gcloud --env-vars-file; avoids comma-splitting bugs from --set-env-vars.
+          python3 .github/workflows/scripts/cloud-run-env-from-dotenv.py /tmp/all.env /tmp/cloud-run-env.yaml
+
+          if [[ -f /tmp/cloud-run-env.yaml ]]; then
+            echo "Cloud Run env-vars-file lines (keys only; values redacted):"
+            sed -E 's/^([^:]+):.*/\1/' /tmp/cloud-run-env.yaml || true
+            echo "cloud-run-env.yaml size (bytes): $(wc -c < /tmp/cloud-run-env.yaml)"
+          else
+            echo "::warning::/tmp/cloud-run-env.yaml missing after conversion"
+          fi
+
+          # Runtime auth: EBUILDER_* credentials or EBUILDER_ACCESS_TOKEN; optional MCP_API_KEY for HTTP bearer auth.
+          for k in EBUILDER_BASE_URL EBUILDER_USERNAME EBUILDER_PASSWORD; do
+            if grep -qx "$k" /tmp/env-key-names.txt 2>/dev/null; then
+              echo "$k is present in secret"
+            else
+              echo "::warning::$k missing from secret — MCP server may fail to authenticate to e-Builder"
+            fi
+          done
+          if grep -qx "EBUILDER_ACCESS_TOKEN" /tmp/env-key-names.txt 2>/dev/null; then
+            echo "EBUILDER_ACCESS_TOKEN is present (password grant not required)"
+          fi
+
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          docker build \
+            -f ebuilder-agent-mcp/Dockerfile \
+            -t "$IMAGE_NAME:${{ github.sha }}" \
+            ebuilder-agent-mcp
+
+      - name: Authenticate Docker to Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Push Docker image
+        run: docker push "$IMAGE_NAME:${{ github.sha }}"
+
+      - name: Deploy to Cloud Run
+        run: |
+          set -euo pipefail
+          EXTRA=()
+          if [[ -s /tmp/cloud-run-env.yaml ]]; then
+            EXTRA+=(--env-vars-file=/tmp/cloud-run-env.yaml)
+            echo "Deploy will use --env-vars-file ($(wc -l < /tmp/cloud-run-env.yaml) line(s))"
+          else
+            echo "::warning::No /tmp/cloud-run-env.yaml (or empty); Cloud Run service env will not be updated from secret"
+          fi
+          gcloud run deploy "$SERVICE_NAME" \
+            --image "$IMAGE_NAME:${{ github.sha }}" \
+            --platform managed \
+            --region "$REGION" \
+            --allow-unauthenticated \
+            --port "$CLOUD_RUN_PORT" \
+            --service-account="$SERVICE_ACCOUNT" \
+            --memory=512Mi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=3 \
+            --timeout=300s \
+            "${EXTRA[@]}"
+
+      - name: Show service URL
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+            --platform managed \
+            --region "$REGION" \
+            --format 'value(status.url)')
+          echo "::notice::EBuilder Agent MCP Server deployed to $SERVICE_URL/mcp (health: $SERVICE_URL/health)"

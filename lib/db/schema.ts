@@ -135,12 +135,13 @@ export const stream = pgTable(
 
 export type Stream = InferSelectModel<typeof stream>;
 
-/** User-configured MCP server connection (HTTP, SSE, or local stdio). */
+/**
+ * MCP server connection (HTTP, SSE, or local stdio).
+ * When userId is null the server is shared by all guest (unauthenticated) visitors.
+ */
 export const mcpServer = pgTable("McpServer", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
-  userId: uuid("userId")
-    .notNull()
-    .references(() => user.id),
+  userId: uuid("userId").references(() => user.id),
   name: varchar("name", { length: 128 }).notNull(),
   description: text("description"),
   transport: varchar("transport", { enum: ["http", "sse", "stdio"] }).notNull(),

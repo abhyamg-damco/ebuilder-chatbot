@@ -208,7 +208,7 @@ export async function POST(request: Request) {
     const modelMessages = await convertToModelMessages(uiMessages);
 
     const mcpBundle = supportsTools
-      ? await loadMcpToolsForUser(session.user.id)
+      ? await loadMcpToolsForUser(session.user.id, session.user.type)
       : { tools: {}, toolNames: [], clients: [], instructions: [] };
 
     const builtInToolNames = [

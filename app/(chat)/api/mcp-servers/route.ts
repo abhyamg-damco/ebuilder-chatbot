@@ -1,12 +1,13 @@
 import { auth } from "@/app/(auth)/auth";
 import {
   createMcpServer,
-  getMcpServersByUserId,
+  getMcpServers,
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 import { createMcpServerSchema } from "@/lib/mcp/types";
 import { testMcpServerConnection } from "@/lib/mcp/client";
 import type { McpServerStatus } from "@/lib/mcp/types";
+import { getMcpServerScope } from "@/lib/mcp/scope";
 import { toPublicMcpServer } from "@/lib/mcp/utils";
 
 export async function GET(request: Request) {
@@ -16,7 +17,8 @@ export async function GET(request: Request) {
     return new ChatbotError("unauthorized:mcp").toResponse();
   }
 
-  const servers = await getMcpServersByUserId({ userId: session.user.id });
+  const scope = getMcpServerScope(session.user.type, session.user.id);
+  const servers = await getMcpServers({ scope });
   const includeStatus =
     new URL(request.url).searchParams.get("status") === "true";
 
@@ -49,9 +51,10 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     const parsed = createMcpServerSchema.parse(body);
+    const scope = getMcpServerScope(session.user.type, session.user.id);
 
     const server = await createMcpServer({
-      userId: session.user.id,
+      scope,
       data: {
         name: parsed.name,
         description: parsed.description ?? null,

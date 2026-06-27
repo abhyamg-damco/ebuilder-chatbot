@@ -9,6 +9,7 @@ import {
   gt,
   gte,
   inArray,
+  isNull,
   lt,
   type SQL,
 } from "drizzle-orm";
@@ -34,9 +35,19 @@ import {
   type McpServer,
 } from "./schema";
 import { generateHashedPassword } from "./utils";
+import type { McpServerScope } from "../mcp/scope";
 
 const client = postgres(process.env.POSTGRES_URL ?? "");
 const db = drizzle(client);
+
+/** Builds a WHERE clause that matches MCP servers for the given access scope. */
+function mcpServerScopeWhere(scope: McpServerScope): SQL {
+  if (scope.kind === "global") {
+    return isNull(mcpServer.userId);
+  }
+
+  return eq(mcpServer.userId, scope.userId);
+}
 
 export async function getUser(email: string): Promise<User[]> {
   try {
@@ -633,31 +644,27 @@ export async function getStreamIdsByChatId({ chatId }: { chatId: string }) {
   }
 }
 
-export async function getMcpServersByUserId({ userId }: { userId: string }) {
+export async function getMcpServers({ scope }: { scope: McpServerScope }) {
   try {
     return await db
       .select()
       .from(mcpServer)
-      .where(eq(mcpServer.userId, userId))
+      .where(mcpServerScopeWhere(scope))
       .orderBy(desc(mcpServer.createdAt));
   } catch (_error) {
     throw new ChatbotError(
       "bad_request:database",
-      "Failed to get MCP servers by user id"
+      "Failed to get MCP servers"
     );
   }
 }
 
-export async function getEnabledMcpServersByUserId({
-  userId,
-}: {
-  userId: string;
-}) {
+export async function getEnabledMcpServers({ scope }: { scope: McpServerScope }) {
   try {
     return await db
       .select()
       .from(mcpServer)
-      .where(and(eq(mcpServer.userId, userId), eq(mcpServer.enabled, true)))
+      .where(and(mcpServerScopeWhere(scope), eq(mcpServer.enabled, true)))
       .orderBy(asc(mcpServer.createdAt));
   } catch (_error) {
     throw new ChatbotError(
@@ -669,16 +676,16 @@ export async function getEnabledMcpServersByUserId({
 
 export async function getMcpServerById({
   id,
-  userId,
+  scope,
 }: {
   id: string;
-  userId: string;
+  scope: McpServerScope;
 }) {
   try {
     const [server] = await db
       .select()
       .from(mcpServer)
-      .where(and(eq(mcpServer.id, id), eq(mcpServer.userId, userId)))
+      .where(and(eq(mcpServer.id, id), mcpServerScopeWhere(scope)))
       .limit(1);
 
     return server ?? null;
@@ -691,17 +698,17 @@ export async function getMcpServerById({
 }
 
 export async function createMcpServer({
-  userId,
+  scope,
   data,
 }: {
-  userId: string;
+  scope: McpServerScope;
   data: Omit<McpServer, "id" | "userId" | "createdAt" | "updatedAt">;
 }) {
   try {
     const [created] = await db
       .insert(mcpServer)
       .values({
-        userId,
+        userId: scope.kind === "user" ? scope.userId : null,
         ...data,
         updatedAt: new Date(),
       })
@@ -718,11 +725,11 @@ export async function createMcpServer({
 
 export async function updateMcpServer({
   id,
-  userId,
+  scope,
   data,
 }: {
   id: string;
-  userId: string;
+  scope: McpServerScope;
   data: Partial<
     Omit<McpServer, "id" | "userId" | "createdAt" | "updatedAt">
   >;
@@ -731,7 +738,7 @@ export async function updateMcpServer({
     const [updated] = await db
       .update(mcpServer)
       .set({ ...data, updatedAt: new Date() })
-      .where(and(eq(mcpServer.id, id), eq(mcpServer.userId, userId)))
+      .where(and(eq(mcpServer.id, id), mcpServerScopeWhere(scope)))
       .returning();
 
     return updated ?? null;
@@ -745,15 +752,15 @@ export async function updateMcpServer({
 
 export async function deleteMcpServer({
   id,
-  userId,
+  scope,
 }: {
   id: string;
-  userId: string;
+  scope: McpServerScope;
 }) {
   try {
     const [deleted] = await db
       .delete(mcpServer)
-      .where(and(eq(mcpServer.id, id), eq(mcpServer.userId, userId)))
+      .where(and(eq(mcpServer.id, id), mcpServerScopeWhere(scope)))
       .returning();
 
     return deleted ?? null;

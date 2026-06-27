@@ -2,8 +2,10 @@ import "server-only";
 
 import type { MCPClient } from "@ai-sdk/mcp";
 import type { ToolSet } from "ai";
-import { getEnabledMcpServersByUserId } from "@/lib/db/queries";
+import type { UserType } from "@/app/(auth)/auth";
+import { getEnabledMcpServers } from "@/lib/db/queries";
 import { createMcpClientFromConfig } from "./client";
+import { getMcpServerScope } from "./scope";
 import { namespaceMcpToolName } from "./utils";
 
 export type LoadedMcpTools = {
@@ -15,13 +17,16 @@ export type LoadedMcpTools = {
 };
 
 /**
- * Connect to all enabled MCP servers for a user and convert their tools
- * into AI SDK-compatible tools with namespaced identifiers.
+ * Connect to all enabled MCP servers for the current session and convert their
+ * tools into AI SDK-compatible tools with namespaced identifiers.
+ * Guest visitors load the shared global configuration.
  */
 export async function loadMcpToolsForUser(
-  userId: string
+  userId: string,
+  userType: UserType
 ): Promise<LoadedMcpTools> {
-  const servers = await getEnabledMcpServersByUserId({ userId });
+  const scope = getMcpServerScope(userType, userId);
+  const servers = await getEnabledMcpServers({ scope });
   const tools: ToolSet = {};
   const toolNames: string[] = [];
   const clients: MCPClient[] = [];

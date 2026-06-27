@@ -3,6 +3,7 @@ import { getMcpServerById } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 import { testMcpServerConnection } from "@/lib/mcp/client";
 import { createMcpServerSchema } from "@/lib/mcp/types";
+import { getMcpServerScope } from "@/lib/mcp/scope";
 import { mergeKeyValueRecords } from "@/lib/mcp/utils";
 
 type RouteContext = {
@@ -17,13 +18,14 @@ export async function POST(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
+  const scope = getMcpServerScope(session.user.type, session.user.id);
 
   try {
     const body = await request.json().catch(() => ({}));
     const isDraft = body?.draft === true;
 
     if (isDraft) {
-      const existing = await getMcpServerById({ id, userId: session.user.id });
+      const existing = await getMcpServerById({ id, scope });
 
       if (!existing) {
         return new ChatbotError("not_found:mcp").toResponse();
@@ -46,7 +48,7 @@ export async function POST(request: Request, context: RouteContext) {
       return Response.json(result);
     }
 
-    const server = await getMcpServerById({ id, userId: session.user.id });
+    const server = await getMcpServerById({ id, scope });
 
     if (!server) {
       return new ChatbotError("not_found:mcp").toResponse();

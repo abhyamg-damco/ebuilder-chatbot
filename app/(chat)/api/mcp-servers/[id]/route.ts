@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 import { updateMcpServerSchema } from "@/lib/mcp/types";
+import { getMcpServerScope } from "@/lib/mcp/scope";
 import { mergeKeyValueRecords, toPublicMcpServer } from "@/lib/mcp/utils";
 
 type RouteContext = {
@@ -20,7 +21,8 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const server = await getMcpServerById({ id, userId: session.user.id });
+  const scope = getMcpServerScope(session.user.type, session.user.id);
+  const server = await getMcpServerById({ id, scope });
 
   if (!server) {
     return new ChatbotError("not_found:mcp").toResponse();
@@ -37,7 +39,8 @@ export async function PATCH(request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const existing = await getMcpServerById({ id, userId: session.user.id });
+  const scope = getMcpServerScope(session.user.type, session.user.id);
+  const existing = await getMcpServerById({ id, scope });
 
   if (!existing) {
     return new ChatbotError("not_found:mcp").toResponse();
@@ -82,7 +85,7 @@ export async function PATCH(request: Request, context: RouteContext) {
 
     const server = await updateMcpServer({
       id,
-      userId: session.user.id,
+      scope,
       data: updateData,
     });
 
@@ -108,7 +111,8 @@ export async function DELETE(_request: Request, context: RouteContext) {
   }
 
   const { id } = await context.params;
-  const deleted = await deleteMcpServer({ id, userId: session.user.id });
+  const scope = getMcpServerScope(session.user.type, session.user.id);
+  const deleted = await deleteMcpServer({ id, scope });
 
   if (!deleted) {
     return new ChatbotError("not_found:mcp").toResponse();

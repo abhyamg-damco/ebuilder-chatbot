@@ -4,7 +4,7 @@ name: Deploy EBuilder Agent MCP Server to Cloud Run
 on:
   push:
     branches:
-      - dev
+      - main
     paths:
       - .github/workflows/deploy-mcp-server.yml
       - .github/workflows/scripts/cloud-run-env-from-dotenv.py

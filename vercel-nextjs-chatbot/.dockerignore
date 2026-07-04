@@ -1,0 +1,30 @@
+# Dependencies and build output
+node_modules
+.next
+out
+
+# Local env and secrets
+.env
+.env.*
+!.env.example
+
+# VCS and editor
+.git
+.gitignore
+.cursor
+.vscode
+
+# Tests and reports
+coverage
+test-results
+playwright-report
+playwright.config.ts
+tests
+**/*.test.ts
+**/*.spec.ts
+
+# Docs and misc
+*.md
+!README.md
+.DS_Store
+tsconfig.tsbuildinfo

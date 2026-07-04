@@ -4,6 +4,8 @@ import type { NextConfig } from "next";
 const basePath = process.env.IS_DEMO === "1" ? "/demo" : "";
 
 const nextConfig: NextConfig = {
+  // Enables a minimal production bundle for self-hosted Docker / Cloud Run.
+  output: "standalone",
   ...(basePath
     ? {
         basePath,

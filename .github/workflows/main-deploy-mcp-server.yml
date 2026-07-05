@@ -21,7 +21,7 @@ env:
   SERVICE_NAME: prod-ebuilder-agent-mcp
   SERVICE_ACCOUNT: ${{ vars.BUILDER_AGENT_MCP_GCP_SERVICE_ACCOUNT_EMAIL }}
   SECRET_NAME: PROD-EBUILDER-AGENT-MCP
-  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/uaic/prod-ebuilder-agent-mcp
+  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ebuilder/prod/prod-ebuilder-agent-mcp
   # Must match ebuilder-agent-mcp default PORT and Dockerfile EXPOSE.
   CLOUD_RUN_PORT: "8080"
 

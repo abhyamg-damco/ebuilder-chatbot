@@ -21,7 +21,7 @@ env:
   SERVICE_NAME: prod-chatbot
   SERVICE_ACCOUNT: ${{ vars.CHATBOT_GCP_SERVICE_ACCOUNT_EMAIL }}
   SECRET_NAME: PROD-CHATBOT
-  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/uaic/prod-chatbot
+  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ebuilder/prod/prod-chatbot
   CLOUD_RUN_PORT: "8080"
 
 jobs:

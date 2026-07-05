@@ -21,7 +21,7 @@ env:
   SERVICE_NAME: dev-chatbot
   SERVICE_ACCOUNT: ${{ vars.CHATBOT_GCP_SERVICE_ACCOUNT_EMAIL }}
   SECRET_NAME: DEV-CHATBOT
-  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/uaic/dev-chatbot
+  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ebuilder/dev/dev-chatbot
   # Must match Dockerfile EXPOSE and Next.js PORT.
   CLOUD_RUN_PORT: "8080"
 

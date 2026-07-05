@@ -44,3 +44,6 @@ Thumbs.db
 # Caches
 .eslintcache
 .node_repl_history
+
+.env.production
+.env.development

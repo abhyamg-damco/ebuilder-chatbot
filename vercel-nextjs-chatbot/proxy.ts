@@ -27,6 +27,7 @@ export async function proxy(request: NextRequest) {
   });
 
   const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  const isGuest = guestRegex.test(token?.email ?? "");
 
   if (!token) {
     if (publicPaths.includes(pathname)) {
@@ -52,7 +53,29 @@ export async function proxy(request: NextRequest) {
     );
   }
 
-  const isGuest = guestRegex.test(token?.email ?? "");
+  if (isGuest && !isTestEnvironment) {
+    if (publicPaths.includes(pathname)) {
+      return NextResponse.next();
+    }
+
+    if (pathname.startsWith("/api/")) {
+      return NextResponse.json(
+        {
+          code: "unauthorized:auth",
+          message: "Please sign in to continue.",
+        },
+        { status: 401 }
+      );
+    }
+
+    const callbackUrl = encodeURIComponent(
+      `${pathname}${request.nextUrl.search}`
+    );
+
+    return NextResponse.redirect(
+      new URL(`${base}/login?callbackUrl=${callbackUrl}`, request.url)
+    );
+  }
 
   if (token && !isGuest && ["/login", "/register"].includes(pathname)) {
     return NextResponse.redirect(new URL(`${base}/`, request.url));

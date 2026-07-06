@@ -102,3 +102,14 @@ export const {
     },
   },
 });
+
+/** Returns the session only for signed-in regular users (not guests). */
+export async function requireRegularSession() {
+  const session = await auth();
+
+  if (!session?.user || session.user.type !== "regular") {
+    return null;
+  }
+
+  return session;
+}

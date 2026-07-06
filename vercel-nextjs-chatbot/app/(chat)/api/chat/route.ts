@@ -10,7 +10,7 @@ import {
 import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
-import { auth, type UserType } from "@/app/(auth)/auth";
+import { requireRegularSession, type UserType } from "@/app/(auth)/auth";
 import { entitlementsByUserType } from "@/lib/ai/entitlements";
 import {
   allowedModelIds,
@@ -92,7 +92,7 @@ export async function POST(request: Request) {
 
     const [, session] = await Promise.all([
       checkBotId().catch(() => null),
-      auth(),
+      requireRegularSession(),
     ]);
 
     if (!session?.user) {
@@ -422,7 +422,7 @@ export async function DELETE(request: Request) {
     return new ChatbotError("bad_request:api").toResponse();
   }
 
-  const session = await auth();
+  const session = await requireRegularSession();
 
   if (!session?.user) {
     return new ChatbotError("unauthorized:chat").toResponse();

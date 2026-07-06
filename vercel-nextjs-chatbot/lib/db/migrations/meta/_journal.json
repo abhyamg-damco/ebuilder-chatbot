@@ -29,6 +29,20 @@
       "when": 1751000001000,
       "tag": "0003_migrate_guest_mcp_servers",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1752000000000,
+      "tag": "0004_auth_user_constraints",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1752000001000,
+      "tag": "0005_normalize_user_emails",
+      "breakpoints": true
     }
   ]
 }

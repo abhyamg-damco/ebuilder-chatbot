@@ -10,6 +10,11 @@ export const isTestEnvironment = Boolean(
 
 export const guestRegex = /^guest-\d+$/;
 
+/** When true, visitors can self-register at /register. Default: admin-created users only. */
+export const isPublicRegistrationEnabled =
+  process.env.NEXT_PUBLIC_ALLOW_PUBLIC_REGISTRATION === "true" ||
+  process.env.ALLOW_PUBLIC_REGISTRATION === "true";
+
 export const DUMMY_PASSWORD = generateDummyPassword();
 
 export const suggestions = [

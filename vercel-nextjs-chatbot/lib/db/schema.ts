@@ -7,21 +7,28 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
 
-export const user = pgTable("User", {
-  id: uuid("id").primaryKey().notNull().defaultRandom(),
-  email: varchar("email", { length: 64 }).notNull(),
-  password: varchar("password", { length: 64 }),
-  name: text("name"),
-  emailVerified: boolean("emailVerified").notNull().default(false),
-  image: text("image"),
-  isAnonymous: boolean("isAnonymous").notNull().default(false),
-  createdAt: timestamp("createdAt").notNull().defaultNow(),
-  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
-});
+export const user = pgTable(
+  "User",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    email: varchar("email", { length: 255 }).notNull(),
+    password: varchar("password", { length: 255 }),
+    name: text("name"),
+    emailVerified: boolean("emailVerified").notNull().default(false),
+    image: text("image"),
+    isAnonymous: boolean("isAnonymous").notNull().default(false),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    emailUnique: uniqueIndex("User_email_unique").on(table.email),
+  })
+);
 
 export type User = InferSelectModel<typeof user>;
 

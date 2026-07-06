@@ -158,3 +158,5 @@ jobs:
             --region "$REGION" \
             --format 'value(status.url)')
           echo "::notice::EBuilder Agent MCP Server deployed to $SERVICE_URL/mcp (health: $SERVICE_URL/health)"
+
+          

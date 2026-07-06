@@ -1,19 +1,23 @@
 "use client";
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
+// import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useSession } from "next-auth/react";
-import { useActionState, useEffect, useState } from "react";
+import { Suspense, useActionState, useEffect, useState } from "react";
 
 import { AuthForm } from "@/components/chat/auth-form";
 import { SubmitButton } from "@/components/chat/submit-button";
 import { toast } from "@/components/chat/toast";
+// import { isPublicRegistrationEnabled } from "@/lib/constants";
 import { type LoginActionState, login } from "../actions";
 
-export default function Page() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState("");
   const [isSuccessful, setIsSuccessful] = useState(false);
+
+  const callbackUrl = searchParams.get("callbackUrl") ?? "/";
 
   const [state, formAction] = useActionState<LoginActionState, FormData>(
     login,
@@ -34,6 +38,7 @@ export default function Page() {
     } else if (state.status === "success") {
       setIsSuccessful(true);
       updateSession();
+      router.push(callbackUrl.startsWith("/") ? callbackUrl : "/");
       router.refresh();
     }
   }, [state.status]);
@@ -51,16 +56,32 @@ export default function Page() {
       </p>
       <AuthForm action={handleSubmit} defaultEmail={email}>
         <SubmitButton isSuccessful={isSuccessful}>Sign in</SubmitButton>
-        <p className="text-center text-[13px] text-muted-foreground">
-          {"No account? "}
-          <Link
-            className="text-foreground underline-offset-4 hover:underline"
-            href="/register"
-          >
-            Sign up
-          </Link>
-        </p>
+        {/* Sign-up UI hidden — users are created via `pnpm user:create`
+        {isPublicRegistrationEnabled ? (
+          <p className="text-center text-[13px] text-muted-foreground">
+            {"No account? "}
+            <Link
+              className="text-foreground underline-offset-4 hover:underline"
+              href="/register"
+            >
+              Sign up
+            </Link>
+          </p>
+        ) : (
+          <p className="text-center text-[13px] text-muted-foreground">
+            Contact your administrator to request an account.
+          </p>
+        )}
+        */}
       </AuthForm>
     </>
+  );
+}
+
+export default function Page() {
+  return (
+    <Suspense fallback={<p className="text-sm text-muted-foreground">Loading...</p>}>
+      <LoginForm />
+    </Suspense>
   );
 }

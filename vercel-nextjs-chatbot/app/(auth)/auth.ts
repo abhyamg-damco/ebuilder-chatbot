@@ -2,7 +2,7 @@ import { compare } from "bcrypt-ts";
 import NextAuth, { type DefaultSession } from "next-auth";
 import type { DefaultJWT } from "next-auth/jwt";
 import Credentials from "next-auth/providers/credentials";
-import { DUMMY_PASSWORD } from "@/lib/constants";
+import { DUMMY_PASSWORD, guestRegex } from "@/lib/constants";
 import { createGuestUser, getUser } from "@/lib/db/queries";
 import { authConfig } from "./auth.config";
 
@@ -54,6 +54,11 @@ export const {
         }
 
         const [user] = users;
+
+        if (guestRegex.test(user.email)) {
+          await compare(password, DUMMY_PASSWORD);
+          return null;
+        }
 
         if (!user.password) {
           await compare(password, DUMMY_PASSWORD);

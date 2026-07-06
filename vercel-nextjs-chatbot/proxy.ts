@@ -1,6 +1,13 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
-import { guestRegex, isDevelopmentEnvironment } from "./lib/constants";
+import {
+  guestRegex,
+  isDevelopmentEnvironment,
+  isPublicRegistrationEnabled,
+  isTestEnvironment,
+} from "./lib/constants";
+
+const publicPaths = ["/login", "/register"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -22,10 +29,26 @@ export async function proxy(request: NextRequest) {
   const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
   if (!token) {
-    const redirectUrl = encodeURIComponent(new URL(request.url).pathname);
+    if (publicPaths.includes(pathname)) {
+      return NextResponse.next();
+    }
+
+    if (isTestEnvironment) {
+      const redirectUrl = encodeURIComponent(
+        `${pathname}${request.nextUrl.search}`
+      );
+
+      return NextResponse.redirect(
+        new URL(`${base}/api/auth/guest?redirectUrl=${redirectUrl}`, request.url)
+      );
+    }
+
+    const callbackUrl = encodeURIComponent(
+      `${pathname}${request.nextUrl.search}`
+    );
 
     return NextResponse.redirect(
-      new URL(`${base}/api/auth/guest?redirectUrl=${redirectUrl}`, request.url)
+      new URL(`${base}/login?callbackUrl=${callbackUrl}`, request.url)
     );
   }
 
@@ -33,6 +56,10 @@ export async function proxy(request: NextRequest) {
 
   if (token && !isGuest && ["/login", "/register"].includes(pathname)) {
     return NextResponse.redirect(new URL(`${base}/`, request.url));
+  }
+
+  if (pathname === "/register" && !isPublicRegistrationEnabled) {
+    return NextResponse.redirect(new URL(`${base}/login`, request.url));
   }
 
   return NextResponse.next();

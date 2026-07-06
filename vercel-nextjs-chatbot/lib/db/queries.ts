@@ -11,6 +11,7 @@ import {
   inArray,
   isNull,
   lt,
+  sql,
   type SQL,
 } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
@@ -34,7 +35,7 @@ import {
   mcpServer,
   type McpServer,
 } from "./schema";
-import { generateHashedPassword } from "./utils";
+import { generateHashedPassword, normalizeAuthEmail } from "./utils";
 import type { McpServerScope } from "../mcp/scope";
 
 const client = postgres(process.env.POSTGRES_URL ?? "");
@@ -50,8 +51,13 @@ function mcpServerScopeWhere(scope: McpServerScope): SQL {
 }
 
 export async function getUser(email: string): Promise<User[]> {
+  const normalizedEmail = normalizeAuthEmail(email);
+
   try {
-    return await db.select().from(user).where(eq(user.email, email));
+    return await db
+      .select()
+      .from(user)
+      .where(sql`lower(${user.email}) = ${normalizedEmail}`);
   } catch (_error) {
     throw new ChatbotError(
       "bad_request:database",
@@ -61,10 +67,21 @@ export async function getUser(email: string): Promise<User[]> {
 }
 
 export async function createUser(email: string, password: string) {
+  const normalizedEmail = normalizeAuthEmail(email);
   const hashedPassword = generateHashedPassword(password);
 
   try {
-    return await db.insert(user).values({ email, password: hashedPassword });
+    return await db
+      .insert(user)
+      .values({
+        email: normalizedEmail,
+        password: hashedPassword,
+        isAnonymous: false,
+      })
+      .returning({
+        id: user.id,
+        email: user.email,
+      });
   } catch (_error) {
     throw new ChatbotError("bad_request:database", "Failed to create user");
   }
@@ -75,10 +92,13 @@ export async function createGuestUser() {
   const password = generateHashedPassword(generateUUID());
 
   try {
-    return await db.insert(user).values({ email, password }).returning({
-      id: user.id,
-      email: user.email,
-    });
+    return await db
+      .insert(user)
+      .values({ email, password, isAnonymous: true })
+      .returning({
+        id: user.id,
+        email: user.email,
+      });
   } catch (_error) {
     throw new ChatbotError(
       "bad_request:database",

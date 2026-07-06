@@ -96,5 +96,8 @@ export default defineConfig({
     url: `${baseURL}/ping`,
     timeout: 120 * 1000,
     reuseExistingServer: !process.env.CI,
+    env: {
+      NEXT_PUBLIC_ALLOW_PUBLIC_REGISTRATION: "true",
+    },
   },
 });

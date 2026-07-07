@@ -99,7 +99,7 @@ jobs:
             echo "::warning::/tmp/cloud-run-env.yaml missing after conversion"
           fi
 
-          for k in POSTGRES_URL AUTH_SECRET OPENAI_API_KEY; do
+          for k in POSTGRES_URL AUTH_SECRET AUTH_TRUST_HOST OPENAI_API_KEY; do
             if grep -qx "$k" /tmp/env-key-names.txt 2>/dev/null; then
               echo "$k is present in secret"
             else
@@ -157,9 +157,9 @@ jobs:
             --allow-unauthenticated \
             --port "$CLOUD_RUN_PORT" \
             --service-account="$SERVICE_ACCOUNT" \
-            --memory=1Gi \
+            --memory=512Mi \
             --cpu=1 \
-            --min-instances=0 \
+            --min-instances=1 \
             --max-instances=10 \
             --timeout=900s \
             "${EXTRA[@]}"

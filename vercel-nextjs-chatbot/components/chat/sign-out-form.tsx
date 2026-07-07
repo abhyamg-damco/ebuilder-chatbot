@@ -1,6 +1,9 @@
+import { redirect } from "next/navigation";
 import Form from "next/form";
 
 import { signOut } from "@/app/(auth)/auth";
+
+const homePath = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`;
 
 export const SignOutForm = () => {
   return (
@@ -8,9 +11,8 @@ export const SignOutForm = () => {
       action={async () => {
         "use server";
 
-        await signOut({
-          redirectTo: "/",
-        });
+        await signOut({ redirect: false });
+        redirect(homePath);
       }}
       className="w-full"
     >

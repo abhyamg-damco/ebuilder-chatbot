@@ -21,6 +21,8 @@ import { guestRegex } from "@/lib/constants";
 import { LoaderIcon } from "./icons";
 import { toast } from "./toast";
 
+const homePath = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/`;
+
 function emailToHue(email: string): number {
   let hash = 0;
   for (const char of email) {
@@ -111,8 +113,8 @@ export function SidebarUserNav({ user }: { user: User }) {
                   if (isGuest) {
                     router.push("/login");
                   } else {
-                    signOut({
-                      redirectTo: "/",
+                    void signOut({ redirect: false }).then(() => {
+                      window.location.assign(homePath);
                     });
                   }
                 }}

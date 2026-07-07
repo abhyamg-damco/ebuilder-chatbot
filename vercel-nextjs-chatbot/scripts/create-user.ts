@@ -1,8 +1,8 @@
 import { config } from "dotenv";
 import { sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
-import postgres from "postgres";
 import { z } from "zod";
+import { closePostgresClient, getPostgresClient } from "../lib/db/client";
 import { user } from "../lib/db/schema";
 import { generateHashedPassword, normalizeAuthEmail } from "../lib/db/utils";
 
@@ -72,7 +72,7 @@ const run = async () => {
 
   const { email, password } = parsed.data;
   const normalizedEmail = normalizeAuthEmail(email);
-  const connection = postgres(process.env.POSTGRES_URL, { max: 1 });
+  const connection = getPostgresClient();
   const db = drizzle(connection);
 
   const existingUsers = await db
@@ -82,7 +82,7 @@ const run = async () => {
 
   if (existingUsers.length > 0) {
     process.stderr.write(`User already exists: ${email}\n`);
-    await connection.end();
+    await closePostgresClient();
     process.exit(1);
   }
 
@@ -104,7 +104,7 @@ const run = async () => {
     `Created user ${createdUser.email} (id: ${createdUser.id})\n`
   );
 
-  await connection.end();
+  await closePostgresClient();
   process.exit(0);
 };
 

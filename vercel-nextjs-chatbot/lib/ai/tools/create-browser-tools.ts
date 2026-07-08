@@ -28,9 +28,8 @@ import type { ChatMessage } from "@/lib/types";
 
 /** Dependencies injected from the chat API route's stream execute callback. */
 type CreateBrowserToolsProps = {
-  /** Chat UUID — scopes the in-memory browser session. */
   chatId: string;
-  /** SSE writer for pushing live-view events to BrowserPanel. */
+  userId: string;
   dataStream: UIMessageStreamWriter<ChatMessage>;
 };
 
@@ -48,6 +47,7 @@ const sessionReplayUrl = (sessionId: string) =>
  */
 export function createBrowserTools({
   chatId,
+  userId,
   dataStream,
 }: CreateBrowserToolsProps) {
   const browserNavigate = tool({
@@ -60,8 +60,10 @@ export function createBrowserTools({
       const { stagehand, sessionId, liveViewUrl } =
         await getOrCreateBrowserSession({
           chatId,
+          userId,
           dataStream,
           title: new URL(url).hostname,
+          startedUrl: url,
         });
 
       const page = stagehand.context.pages()[0];
@@ -94,7 +96,7 @@ export function createBrowserTools({
     }),
     execute: async ({ instruction }) => {
       const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({ chatId, dataStream });
+        await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
       // observe→act pattern: discover the element once, then replay without full LLM act().
       const observed = await stagehand.observe(instruction);
@@ -134,7 +136,7 @@ export function createBrowserTools({
     }),
     execute: async ({ instruction }) => {
       const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({ chatId, dataStream });
+        await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
       const extracted = await stagehand.extract(
         instruction,
@@ -169,7 +171,7 @@ export function createBrowserTools({
     }),
     execute: async ({ instruction, maxSteps = BROWSER_AGENT_MAX_STEPS }) => {
       const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({ chatId, dataStream });
+        await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
       const agent = stagehand.agent({
         systemPrompt:
@@ -222,8 +224,10 @@ export function createBrowserTools({
       const { stagehand, sessionId, liveViewUrl } =
         await getOrCreateBrowserSession({
           chatId,
+          userId,
           dataStream,
           title: result.title,
+          startedUrl: result.url,
         });
 
       const page = stagehand.context.pages()[0];
@@ -276,8 +280,10 @@ export function createBrowserTools({
       const { stagehand, sessionId, liveViewUrl } =
         await getOrCreateBrowserSession({
           chatId,
+          userId,
           dataStream,
           title: result.title,
+          startedUrl: result.url,
         });
 
       const page = stagehand.context.pages()[0];

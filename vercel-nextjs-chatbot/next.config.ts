@@ -11,7 +11,13 @@ const nextConfig: NextConfig = {
    * @see docs/decisions/001-dynamic-stagehand-loading.md
    * @see docs/decisions/002-ai-sdk-dependency-isolation.md
    */
-  serverExternalPackages: ["@browserbasehq/stagehand", "@browserbasehq/sdk"],
+  serverExternalPackages: [
+    "@browserbasehq/stagehand",
+    "@browserbasehq/sdk",
+    "@google-cloud/storage",
+    "pdf-parse",
+    "mammoth",
+  ],
   // Enables a minimal production bundle for self-hosted Docker / Cloud Run.
   output: "standalone",
   ...(basePath
@@ -49,6 +55,10 @@ const nextConfig: NextConfig = {
       {
         protocol: "https",
         hostname: "*.public.blob.vercel-storage.com",
+      },
+      {
+        protocol: "https",
+        hostname: "storage.googleapis.com",
       },
     ],
   },

@@ -2,6 +2,8 @@ import type { InferSelectModel } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
+  index,
+  integer,
   json,
   pgTable,
   primaryKey,
@@ -163,3 +165,111 @@ export const mcpServer = pgTable("McpServer", {
 });
 
 export type McpServer = InferSelectModel<typeof mcpServer>;
+
+/** Upload metadata stored alongside GCS objects. */
+export type ChatUploadMetadata = {
+  extractedTextPreview?: string;
+  pageCount?: number;
+  width?: number;
+  height?: number;
+};
+
+/**
+ * User-uploaded files scoped to a chat conversation.
+ * Objects live in GCS; this table stores metadata and access control.
+ */
+export const chatUpload = pgTable(
+  "ChatUpload",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    chatId: uuid("chatId")
+      .notNull()
+      .references(() => chat.id),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    messageId: uuid("messageId").references(() => message.id),
+    originalFilename: text("originalFilename").notNull(),
+    mimeType: varchar("mimeType", { length: 128 }).notNull(),
+    sizeBytes: integer("sizeBytes").notNull(),
+    bucket: varchar("bucket", { length: 255 }).notNull(),
+    objectPath: text("objectPath").notNull(),
+    isPublic: boolean("isPublic").notNull().default(false),
+    category: varchar("category", { enum: ["image", "document"] }).notNull(),
+    status: varchar("status", {
+      enum: ["uploading", "ready", "failed", "deleted"],
+    })
+      .notNull()
+      .default("uploading"),
+    checksumSha256: varchar("checksumSha256", { length: 64 }),
+    metadata: json("metadata").$type<ChatUploadMetadata>().notNull().default({}),
+    uploadedAt: timestamp("uploadedAt").notNull().defaultNow(),
+    deletedAt: timestamp("deletedAt"),
+  },
+  (table) => ({
+    chatUploadedAtIdx: index("ChatUpload_chatId_uploadedAt_idx").on(
+      table.chatId,
+      table.uploadedAt
+    ),
+    userIdx: index("ChatUpload_userId_idx").on(table.userId),
+  })
+);
+
+export type ChatUpload = InferSelectModel<typeof chatUpload>;
+
+/** Browserbase session metadata persisted per chat. */
+export type ChatBrowserSessionMetadata = {
+  toolsUsed?: string[];
+  stepCount?: number;
+  pagesVisited?: number;
+};
+
+/**
+ * Cloud browser session history for a chat.
+ * Runtime Stagehand handles remain in-memory; this table stores durable metadata.
+ */
+export const chatBrowserSession = pgTable(
+  "ChatBrowserSession",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    chatId: uuid("chatId")
+      .notNull()
+      .references(() => chat.id),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    browserbaseSessionId: varchar("browserbaseSessionId", { length: 128 }).notNull(),
+    status: varchar("status", {
+      enum: ["starting", "running", "ended", "error"],
+    })
+      .notNull()
+      .default("starting"),
+    title: text("title"),
+    startedUrl: text("startedUrl"),
+    lastKnownUrl: text("lastKnownUrl"),
+    liveViewUrl: text("liveViewUrl"),
+    replayUrl: text("replayUrl").notNull(),
+    messageId: uuid("messageId").references(() => message.id),
+    toolCallId: varchar("toolCallId", { length: 128 }),
+    startedAt: timestamp("startedAt").notNull().defaultNow(),
+    endedAt: timestamp("endedAt"),
+    lastActivityAt: timestamp("lastActivityAt").notNull().defaultNow(),
+    durationSeconds: integer("durationSeconds"),
+    errorMessage: text("errorMessage"),
+    metadata: json("metadata")
+      .$type<ChatBrowserSessionMetadata>()
+      .notNull()
+      .default({}),
+  },
+  (table) => ({
+    chatStartedAtIdx: index("ChatBrowserSession_chatId_startedAt_idx").on(
+      table.chatId,
+      table.startedAt
+    ),
+    browserbaseSessionUnique: uniqueIndex(
+      "ChatBrowserSession_browserbaseSessionId_unique"
+    ).on(table.browserbaseSessionId),
+  })
+);
+
+export type ChatBrowserSession = InferSelectModel<typeof chatBrowserSession>;

@@ -12,10 +12,14 @@ function PureChatHeader({
   chatId,
   selectedVisibilityType,
   isReadonly,
+  uploadCount = 0,
+  browserSessionCount = 0,
 }: {
   chatId: string;
   selectedVisibilityType: VisibilityType;
   isReadonly: boolean;
+  uploadCount?: number;
+  browserSessionCount?: number;
 }) {
   const { state, toggleSidebar, isMobile } = useSidebar();
 
@@ -49,6 +53,17 @@ function PureChatHeader({
           selectedVisibilityType={selectedVisibilityType}
         />
       )}
+
+      <div className="ml-auto flex items-center gap-2 text-muted-foreground text-xs">
+        {uploadCount > 0 ? (
+          <span data-testid="chat-upload-count">{uploadCount} file{uploadCount === 1 ? "" : "s"}</span>
+        ) : null}
+        {browserSessionCount > 0 ? (
+          <span data-testid="chat-browser-session-count">
+            {browserSessionCount} browser{browserSessionCount === 1 ? "" : "s"}
+          </span>
+        ) : null}
+      </div>
     </header>
   );
 }
@@ -57,6 +72,8 @@ export const ChatHeader = memo(PureChatHeader, (prevProps, nextProps) => {
   return (
     prevProps.chatId === nextProps.chatId &&
     prevProps.selectedVisibilityType === nextProps.selectedVisibilityType &&
-    prevProps.isReadonly === nextProps.isReadonly
+    prevProps.isReadonly === nextProps.isReadonly &&
+    prevProps.uploadCount === nextProps.uploadCount &&
+    prevProps.browserSessionCount === nextProps.browserSessionCount
   );
 });

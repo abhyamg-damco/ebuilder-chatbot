@@ -26,7 +26,7 @@ import { cn } from "@/lib/utils";
  * Live cloud browser panel — embeds Browserbase debuggerFullscreenUrl in an iframe.
  * Opens automatically when the agent calls a live-browser tool.
  */
-export function BrowserPanel() {
+export function BrowserPanel({ chatId }: { chatId: string }) {
   const isVisible = useBrowserPanelSelector((state) => state.isVisible);
   const sessionId = useBrowserPanelSelector((state) => state.sessionId);
   const liveViewUrl = useBrowserPanelSelector((state) => state.liveViewUrl);
@@ -56,7 +56,7 @@ export function BrowserPanel() {
 
     const poll = async () => {
       const response = await fetch(
-        `/api/browserbase/live-view?sessionId=${encodeURIComponent(sessionId)}`
+        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/browserbase/live-view?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(chatId)}`
       );
 
       if (!response.ok || cancelled) {
@@ -80,7 +80,7 @@ export function BrowserPanel() {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [sessionId, liveViewUrl, status]);
+  }, [sessionId, liveViewUrl, status, chatId]);
 
   /** Browserbase iframe posts this when the cloud session ends. */
   useEffect(() => {

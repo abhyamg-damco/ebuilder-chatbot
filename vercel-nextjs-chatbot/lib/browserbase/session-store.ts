@@ -1,21 +1,14 @@
 /**
- * @file In-memory Browserbase session store
- *
- * Manages one shared Stagehand session per chat ID within a single API request.
- * All browser tools (navigate, act, extract, agent) reuse the same session so
- * the user sees one continuous live view in the right-hand panel.
- *
- * Lifecycle:
- * 1. First live-browser tool call → create Stagehand session → emit data-browserSession
- * 2. Subsequent tool calls in the same request → reuse existing session
- * 3. closeBrowser tool or stream onFinish → close session and clean up map
- *
- * @see docs/architecture/browserbase-integration.md
- * @see docs/decisions/005-session-lifecycle.md
+ * @file In-memory Browserbase session store with Postgres metadata persistence.
  */
 import "server-only";
 
 import type { UIMessageStreamWriter } from "ai";
+import {
+  createBrowserSessionRecord,
+  endBrowserSessionRecord,
+  updateBrowserSessionRecord,
+} from "@/lib/db/queries";
 import type { ChatMessage } from "@/lib/types";
 import { getSessionLiveViewUrl } from "./live-view";
 import {
@@ -30,13 +23,8 @@ export type ActiveBrowserSession = {
   liveViewUrl: string;
 };
 
-/**
- * Process-local session map keyed by chat ID.
- * Sessions do not persist across separate HTTP requests (serverless limitation).
- */
 const activeSessions = new Map<string, ActiveBrowserSession>();
 
-/** Payload written to the UI stream to open/update the browser panel. */
 type BrowserSessionStreamEvent = {
   sessionId: string;
   liveViewUrl?: string;
@@ -44,13 +32,6 @@ type BrowserSessionStreamEvent = {
   title?: string;
 };
 
-/**
- * Pushes a `data-browserSession` event to the chat SSE stream.
- * DataStreamHandler on the client reads this and opens BrowserPanel.
- *
- * @param dataStream - Writer from createUIMessageStream in the chat API route.
- * @param data - Session metadata for the live-view panel.
- */
 function emitBrowserSessionEvent(
   dataStream: UIMessageStreamWriter<ChatMessage>,
   data: BrowserSessionStreamEvent
@@ -58,34 +39,37 @@ function emitBrowserSessionEvent(
   dataStream.write({
     type: "data-browserSession",
     data,
-    transient: true, // UI-only — not persisted to the messages table.
+    transient: true,
   });
 }
 
 /**
  * Returns the active session for a chat, or creates a new cloud browser session.
- *
- * On first creation:
- * - Initializes Stagehand against Browserbase
- * - Fetches the live-view embed URL
- * - Emits a stream event so the right-hand panel opens immediately
- *
- * @param chatId - Chat UUID — scopes the session to one conversation per request.
- * @param dataStream - SSE writer for pushing live-view state to the client.
- * @param title - Optional label shown in the browser panel header.
  */
 export async function getOrCreateBrowserSession({
   chatId,
+  userId,
   dataStream,
   title,
+  startedUrl,
 }: {
   chatId: string;
+  userId: string;
   dataStream: UIMessageStreamWriter<ChatMessage>;
   title?: string;
+  startedUrl?: string;
 }): Promise<ActiveBrowserSession> {
   const existing = activeSessions.get(chatId);
 
   if (existing) {
+    if (startedUrl) {
+      await updateBrowserSessionRecord({
+        browserbaseSessionId: existing.sessionId,
+        lastKnownUrl: startedUrl,
+        status: "running",
+        title,
+      });
+    }
     return existing;
   }
 
@@ -104,7 +88,16 @@ export async function getOrCreateBrowserSession({
 
   activeSessions.set(chatId, session);
 
-  // Notify the client — this is what opens the right-hand live browser panel.
+  await createBrowserSessionRecord({
+    chatId,
+    userId,
+    browserbaseSessionId: sessionId,
+    status: "running",
+    title: title ?? "Live browser",
+    startedUrl,
+    liveViewUrl,
+  });
+
   emitBrowserSessionEvent(dataStream, {
     sessionId,
     liveViewUrl,
@@ -115,11 +108,31 @@ export async function getOrCreateBrowserSession({
   return session;
 }
 
+/** Updates last-known URL for the active browser session. */
+export async function touchBrowserSession({
+  chatId,
+  lastKnownUrl,
+  title,
+}: {
+  chatId: string;
+  lastKnownUrl?: string;
+  title?: string;
+}): Promise<void> {
+  const existing = activeSessions.get(chatId);
+  if (!existing) {
+    return;
+  }
+
+  await updateBrowserSessionRecord({
+    browserbaseSessionId: existing.sessionId,
+    lastKnownUrl,
+    title,
+    status: "running",
+  });
+}
+
 /**
- * Closes the cloud browser for a chat and optionally notifies the UI.
- *
- * @param chatId - Chat whose session should be closed.
- * @param dataStream - When provided, emits status "ended" to the browser panel.
+ * Closes the cloud browser for a chat and persists ended status.
  */
 export async function closeBrowserSession({
   chatId,
@@ -139,6 +152,11 @@ export async function closeBrowserSession({
   try {
     await session.stagehand.close();
   } finally {
+    await endBrowserSessionRecord({
+      browserbaseSessionId: session.sessionId,
+      status: "ended",
+    });
+
     if (dataStream) {
       emitBrowserSessionEvent(dataStream, {
         sessionId: session.sessionId,
@@ -148,10 +166,7 @@ export async function closeBrowserSession({
   }
 }
 
-/**
- * Closes all in-memory sessions — called from streamText onFinish as a safety net.
- * Ensures cloud browsers are not left running if the agent forgets closeBrowser.
- */
+/** Closes all in-memory sessions and marks DB records ended. */
 export async function closeAllBrowserSessions(): Promise<void> {
   const closers = [...activeSessions.keys()].map((chatId) =>
     closeBrowserSession({ chatId })

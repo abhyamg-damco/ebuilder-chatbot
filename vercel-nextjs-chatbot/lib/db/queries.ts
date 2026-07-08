@@ -21,6 +21,12 @@ import { generateUUID } from "../utils";
 import {
   type Chat,
   chat,
+  type ChatBrowserSession,
+  type ChatBrowserSessionMetadata,
+  chatBrowserSession,
+  type ChatUpload,
+  type ChatUploadMetadata,
+  chatUpload,
   type DBMessage,
   document,
   message,
@@ -796,6 +802,427 @@ export async function deleteMcpServer({
     throw new ChatbotError(
       "bad_request:database",
       "Failed to delete MCP server"
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chat uploads (GCS metadata)
+// ---------------------------------------------------------------------------
+
+/** Inserts a new chat upload metadata row. */
+export async function createChatUpload({
+  id,
+  chatId,
+  userId,
+  originalFilename,
+  mimeType,
+  sizeBytes,
+  bucket,
+  objectPath,
+  isPublic = false,
+  category,
+  status = "uploading",
+  checksumSha256,
+  metadata = {},
+}: {
+  id?: string;
+  chatId: string;
+  userId: string;
+  originalFilename: string;
+  mimeType: string;
+  sizeBytes: number;
+  bucket: string;
+  objectPath: string;
+  isPublic?: boolean;
+  category: "image" | "document";
+  status?: "uploading" | "ready" | "failed" | "deleted";
+  checksumSha256?: string;
+  metadata?: ChatUploadMetadata;
+}): Promise<ChatUpload> {
+  try {
+    const [row] = await useDb()
+      .insert(chatUpload)
+      .values({
+        ...(id ? { id } : {}),
+        chatId,
+        userId,
+        originalFilename,
+        mimeType,
+        sizeBytes,
+        bucket,
+        objectPath,
+        isPublic,
+        category,
+        status,
+        checksumSha256,
+        metadata,
+        uploadedAt: new Date(),
+      })
+      .returning();
+    return row;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to create chat upload");
+  }
+}
+
+/** Updates bucket and checksum after GCS upload completes. */
+export async function finalizeChatUpload({
+  id,
+  bucket,
+  checksumSha256,
+  metadata,
+}: {
+  id: string;
+  bucket: string;
+  checksumSha256: string;
+  metadata?: ChatUploadMetadata;
+}): Promise<ChatUpload | null> {
+  try {
+    const [row] = await useDb()
+      .update(chatUpload)
+      .set({
+        bucket,
+        checksumSha256,
+        status: "ready",
+        ...(metadata ? { metadata } : {}),
+      })
+      .where(eq(chatUpload.id, id))
+      .returning();
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to finalize chat upload"
+    );
+  }
+}
+
+/** Updates upload status and optional metadata. */
+export async function updateChatUploadStatus({
+  id,
+  status,
+  metadata,
+}: {
+  id: string;
+  status: "uploading" | "ready" | "failed" | "deleted";
+  metadata?: ChatUploadMetadata;
+}): Promise<ChatUpload | null> {
+  try {
+    const [row] = await useDb()
+      .update(chatUpload)
+      .set({
+        status,
+        ...(metadata ? { metadata } : {}),
+        ...(status === "deleted" ? { deletedAt: new Date() } : {}),
+      })
+      .where(eq(chatUpload.id, id))
+      .returning();
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to update chat upload status"
+    );
+  }
+}
+
+/** Links uploaded files to the message that sent them. */
+export async function linkUploadsToMessage({
+  uploadIds,
+  messageId,
+}: {
+  uploadIds: string[];
+  messageId: string;
+}): Promise<void> {
+  if (uploadIds.length === 0) {
+    return;
+  }
+  try {
+    await useDb()
+      .update(chatUpload)
+      .set({ messageId })
+      .where(inArray(chatUpload.id, uploadIds));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to link uploads to message"
+    );
+  }
+}
+
+/** Returns ready uploads for a chat, newest first. */
+export async function getChatUploadsByChatId({
+  chatId,
+  includeDeleted = false,
+}: {
+  chatId: string;
+  includeDeleted?: boolean;
+}): Promise<ChatUpload[]> {
+  try {
+    return await useDb()
+      .select()
+      .from(chatUpload)
+      .where(
+        includeDeleted
+          ? eq(chatUpload.chatId, chatId)
+          : and(
+              eq(chatUpload.chatId, chatId),
+              eq(chatUpload.status, "ready")
+            )
+      )
+      .orderBy(desc(chatUpload.uploadedAt));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get chat uploads"
+    );
+  }
+}
+
+/** Fetches a single upload by ID. */
+export async function getChatUploadById({
+  id,
+}: {
+  id: string;
+}): Promise<ChatUpload | null> {
+  try {
+    const [row] = await useDb()
+      .select()
+      .from(chatUpload)
+      .where(eq(chatUpload.id, id))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get chat upload");
+  }
+}
+
+/** Soft-deletes an upload record. */
+export async function softDeleteChatUpload({
+  id,
+}: {
+  id: string;
+}): Promise<ChatUpload | null> {
+  return updateChatUploadStatus({ id, status: "deleted" });
+}
+
+// ---------------------------------------------------------------------------
+// Browser session metadata
+// ---------------------------------------------------------------------------
+
+/** Creates a durable browser session record when a cloud browser starts. */
+export async function createBrowserSessionRecord({
+  chatId,
+  userId,
+  browserbaseSessionId,
+  status = "starting",
+  title,
+  startedUrl,
+  liveViewUrl,
+  messageId,
+  toolCallId,
+}: {
+  chatId: string;
+  userId: string;
+  browserbaseSessionId: string;
+  status?: "starting" | "running" | "ended" | "error";
+  title?: string;
+  startedUrl?: string;
+  liveViewUrl?: string;
+  messageId?: string;
+  toolCallId?: string;
+}): Promise<ChatBrowserSession> {
+  const now = new Date();
+  const replayUrl = `https://www.browserbase.com/sessions/${browserbaseSessionId}`;
+
+  try {
+    const [row] = await useDb()
+      .insert(chatBrowserSession)
+      .values({
+        chatId,
+        userId,
+        browserbaseSessionId,
+        status,
+        title,
+        startedUrl,
+        lastKnownUrl: startedUrl,
+        liveViewUrl,
+        replayUrl,
+        messageId,
+        toolCallId,
+        startedAt: now,
+        lastActivityAt: now,
+      })
+      .returning();
+    return row;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to create browser session record"
+    );
+  }
+}
+
+/** Updates browser session activity and optional URLs. */
+export async function updateBrowserSessionRecord({
+  browserbaseSessionId,
+  status,
+  title,
+  lastKnownUrl,
+  liveViewUrl,
+  metadata,
+}: {
+  browserbaseSessionId: string;
+  status?: "starting" | "running" | "ended" | "error";
+  title?: string;
+  lastKnownUrl?: string;
+  liveViewUrl?: string;
+  metadata?: ChatBrowserSessionMetadata;
+}): Promise<ChatBrowserSession | null> {
+  try {
+    const [row] = await useDb()
+      .update(chatBrowserSession)
+      .set({
+        ...(status ? { status } : {}),
+        ...(title ? { title } : {}),
+        ...(lastKnownUrl ? { lastKnownUrl } : {}),
+        ...(liveViewUrl ? { liveViewUrl } : {}),
+        ...(metadata ? { metadata } : {}),
+        lastActivityAt: new Date(),
+      })
+      .where(eq(chatBrowserSession.browserbaseSessionId, browserbaseSessionId))
+      .returning();
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to update browser session record"
+    );
+  }
+}
+
+/** Marks a browser session as ended and records duration. */
+export async function endBrowserSessionRecord({
+  browserbaseSessionId,
+  status = "ended",
+  errorMessage,
+}: {
+  browserbaseSessionId: string;
+  status?: "ended" | "error";
+  errorMessage?: string;
+}): Promise<ChatBrowserSession | null> {
+  try {
+    const existing = await useDb()
+      .select()
+      .from(chatBrowserSession)
+      .where(eq(chatBrowserSession.browserbaseSessionId, browserbaseSessionId))
+      .limit(1);
+
+    const session = existing.at(0);
+    const endedAt = new Date();
+    const durationSeconds = session
+      ? Math.max(
+          0,
+          Math.floor(
+            (endedAt.getTime() - session.startedAt.getTime()) / 1000
+          )
+        )
+      : undefined;
+
+    const [row] = await useDb()
+      .update(chatBrowserSession)
+      .set({
+        status,
+        endedAt,
+        durationSeconds,
+        errorMessage,
+        lastActivityAt: endedAt,
+      })
+      .where(eq(chatBrowserSession.browserbaseSessionId, browserbaseSessionId))
+      .returning();
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to end browser session record"
+    );
+  }
+}
+
+/** Returns browser session history for a chat, newest first. */
+export async function getBrowserSessionsByChatId({
+  chatId,
+  limit = 20,
+}: {
+  chatId: string;
+  limit?: number;
+}): Promise<ChatBrowserSession[]> {
+  try {
+    return await useDb()
+      .select()
+      .from(chatBrowserSession)
+      .where(eq(chatBrowserSession.chatId, chatId))
+      .orderBy(desc(chatBrowserSession.startedAt))
+      .limit(limit);
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get browser sessions"
+    );
+  }
+}
+
+/** Returns the most recent non-ended session for a chat, if any. */
+export async function getActiveBrowserSessionForChat({
+  chatId,
+}: {
+  chatId: string;
+}): Promise<ChatBrowserSession | null> {
+  try {
+    const [row] = await useDb()
+      .select()
+      .from(chatBrowserSession)
+      .where(
+        and(
+          eq(chatBrowserSession.chatId, chatId),
+          inArray(chatBrowserSession.status, ["starting", "running"])
+        )
+      )
+      .orderBy(desc(chatBrowserSession.startedAt))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get active browser session"
+    );
+  }
+}
+
+/** Verifies a Browserbase session belongs to the given chat. */
+export async function getBrowserSessionByBrowserbaseId({
+  browserbaseSessionId,
+  chatId,
+}: {
+  browserbaseSessionId: string;
+  chatId?: string;
+}): Promise<ChatBrowserSession | null> {
+  try {
+    const conditions = [eq(chatBrowserSession.browserbaseSessionId, browserbaseSessionId)];
+    if (chatId) {
+      conditions.push(eq(chatBrowserSession.chatId, chatId));
+    }
+    const [row] = await useDb()
+      .select()
+      .from(chatBrowserSession)
+      .where(and(...conditions))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get browser session"
     );
   }
 }

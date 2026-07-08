@@ -1,23 +1,16 @@
-/**
- * @file GET /api/browserbase/live-view
- *
- * Returns the embeddable live-view URL for a Browserbase session.
- * The BROWSERBASE_API_KEY never leaves the server — the client only
- * receives debuggerFullscreenUrl for the iframe src.
- *
- * Used by BrowserPanel as a poll fallback when the SSE stream has not
- * yet delivered liveViewUrl.
- *
- * @see docs/decisions/003-live-browser-panel.md
- */
 import { auth } from "@/app/(auth)/auth";
 import { isBrowserbaseEnabled } from "@/lib/browserbase/config";
 import { getSessionLiveViewUrl } from "@/lib/browserbase/live-view";
+import {
+  getBrowserSessionByBrowserbaseId,
+  getChatById,
+} from "@/lib/db/queries";
 import { ChatbotError } from "@/lib/errors";
 
 /**
- * @param request - Must include ?sessionId={uuid} query parameter.
- * @returns JSON `{ debuggerFullscreenUrl }` or 404 while session is starting.
+ * GET /api/browserbase/live-view?sessionId={uuid}&chatId={uuid}
+ *
+ * Returns embeddable live-view URL after verifying session ownership.
  */
 export async function GET(request: Request) {
   if (!isBrowserbaseEnabled()) {
@@ -32,16 +25,45 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const sessionId = searchParams.get("sessionId");
+  const chatId = searchParams.get("chatId");
 
   if (!sessionId) {
     return new ChatbotError("bad_request:api", "sessionId is required").toResponse();
+  }
+
+  if (chatId) {
+    const chat = await getChatById({ id: chatId });
+    if (!chat || chat.userId !== session.user.id) {
+      return new ChatbotError("forbidden:chat").toResponse();
+    }
+
+    const browserSession = await getBrowserSessionByBrowserbaseId({
+      browserbaseSessionId: sessionId,
+      chatId,
+    });
+
+    if (!browserSession) {
+      return new ChatbotError("forbidden:chat", "Session not found for chat").toResponse();
+    }
+  } else {
+    const browserSession = await getBrowserSessionByBrowserbaseId({
+      browserbaseSessionId: sessionId,
+    });
+
+    if (!browserSession) {
+      return new ChatbotError("forbidden:chat", "Unknown browser session").toResponse();
+    }
+
+    const chat = await getChatById({ id: browserSession.chatId });
+    if (!chat || chat.userId !== session.user.id) {
+      return new ChatbotError("forbidden:chat").toResponse();
+    }
   }
 
   try {
     const debuggerFullscreenUrl = await getSessionLiveViewUrl(sessionId);
     return Response.json({ debuggerFullscreenUrl });
   } catch {
-    // Session still booting — client will retry.
     return Response.json(
       { error: "Live view not ready yet" },
       { status: 404 }

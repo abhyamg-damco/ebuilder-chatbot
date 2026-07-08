@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useActiveChat } from "@/hooks/use-active-chat";
+import { useChatMetadata } from "@/hooks/use-chat-metadata";
 import {
   initialBrowserPanelData,
   useBrowserPanel,
@@ -58,6 +59,7 @@ export function ChatShell() {
     null
   );
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const { data: chatMetadata } = useChatMetadata(chatId, !isLoading);
   const isArtifactVisible = useArtifactSelector((state) => state.isVisible);
   const isBrowserPanelVisible = useBrowserPanelSelector(
     (state) => state.isVisible
@@ -81,6 +83,28 @@ export function ChatShell() {
     }
   }, [chatId, setArtifact, setBrowserPanel]);
 
+  /** Restore browser panel replay state from persisted session metadata on load. */
+  useEffect(() => {
+    const latest = chatMetadata?.browserSessions.history.at(0);
+    if (!latest || isBrowserPanelVisible) {
+      return;
+    }
+
+    if (latest.status === "running" || latest.status === "starting") {
+      setBrowserPanel({
+        sessionId: latest.browserbaseSessionId,
+        liveViewUrl: latest.liveViewUrl ?? null,
+        title: latest.title ?? "Live browser",
+        status: "running",
+        isVisible: false,
+      });
+    }
+  }, [chatMetadata, isBrowserPanelVisible, setBrowserPanel]);
+
+  const uploadCount = chatMetadata?.uploads.count ?? 0;
+  const browserSessionCount =
+    chatMetadata?.browserSessions.history.length ?? 0;
+
   return (
     <>
       <div className="flex h-dvh w-full flex-row overflow-hidden">
@@ -91,9 +115,11 @@ export function ChatShell() {
           )}
         >
           <ChatHeader
+            browserSessionCount={browserSessionCount}
             chatId={chatId}
             isReadonly={isReadonly}
             selectedVisibilityType={visibilityType}
+            uploadCount={uploadCount}
           />
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background md:rounded-tl-[12px] md:border-t md:border-l md:border-border/40">
@@ -162,7 +188,7 @@ export function ChatShell() {
         </div>
 
         {isBrowserPanelVisible ? (
-          <BrowserPanel />
+          <BrowserPanel chatId={chatId} />
         ) : (
           <Artifact
             addToolApprovalResponse={addToolApprovalResponse}

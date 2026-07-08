@@ -59,7 +59,11 @@ export type ChatMessage = UIMessage<
 >;
 
 export type Attachment = {
+  id: string;
   name: string;
   url: string;
   contentType: string;
+  category?: "image" | "document";
+  expiresAt?: string;
+  sizeBytes?: number;
 };

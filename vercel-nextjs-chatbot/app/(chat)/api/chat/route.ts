@@ -24,6 +24,7 @@ import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { editDocument } from "@/lib/ai/tools/edit-document";
 import { createBrowserTools } from "@/lib/ai/tools/create-browser-tools";
+import { createGetChatUploadsTool } from "@/lib/ai/tools/get-chat-uploads";
 import { fetchWebPage } from "@/lib/ai/tools/fetch-web-page";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
@@ -37,11 +38,19 @@ import {
   loadMcpToolsForUser,
 } from "@/lib/mcp/load-tools";
 import {
+  buildUploadAccessList,
+  collectUploadIdsFromMessages,
+  refreshFilePartUrls,
+  stripNonNativeFileParts,
+} from "@/lib/chat/uploads";
+import {
   createStreamId,
   deleteChatById,
   getChatById,
+  getChatUploadsByChatId,
   getMessageCountByUserId,
   getMessagesByChatId,
+  linkUploadsToMessage,
   saveChat,
   saveMessages,
   updateChatTitleById,
@@ -202,7 +211,23 @@ export async function POST(request: Request) {
           },
         ],
       });
+
+      const uploadIds = collectUploadIdsFromMessages([message as ChatMessage]);
+      if (uploadIds.length > 0) {
+        await linkUploadsToMessage({
+          uploadIds,
+          messageId: message.id,
+        });
+      }
     }
+
+    const chatUploadRecords = await getChatUploadsByChatId({ chatId: id });
+    const uploadAccessList = await buildUploadAccessList(chatUploadRecords);
+    const uiMessagesWithUrls = await refreshFilePartUrls({
+      messages: uiMessages,
+      uploads: uploadAccessList,
+    });
+    const uiMessagesForModel = stripNonNativeFileParts(uiMessagesWithUrls);
 
     const modelConfig = chatModels.find((m) => m.id === chatModel);
     const modelCapabilities = await getCapabilities();
@@ -210,7 +235,7 @@ export async function POST(request: Request) {
     const isReasoningModel = capabilities?.reasoning === true;
     const supportsTools = capabilities?.tools === true;
 
-    const modelMessages = await convertToModelMessages(uiMessages);
+    const modelMessages = await convertToModelMessages(uiMessagesForModel);
 
     const mcpBundle = supportsTools
       ? await loadMcpToolsForUser(session.user.id, session.user.type)
@@ -241,10 +266,18 @@ export async function POST(request: Request) {
         ] as const)
       : ([] as const);
 
+    const uploadToolNames =
+      uploadAccessList.length > 0 ? (["getChatUploads"] as const) : ([] as const);
+
     const activeToolNames =
       isReasoningModel && !supportsTools
         ? []
-        : [...builtInToolNames, ...browserToolNames, ...mcpBundle.toolNames];
+        : [
+            ...builtInToolNames,
+            ...uploadToolNames,
+            ...browserToolNames,
+            ...mcpBundle.toolNames,
+          ];
 
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
@@ -252,7 +285,11 @@ export async function POST(request: Request) {
         const latestUserMessageText = getLatestUserMessageText(uiMessages);
         const browserTools =
           browserToolNames.length > 0
-            ? createBrowserTools({ chatId: id, dataStream })
+            ? createBrowserTools({
+                chatId: id,
+                userId: session.user.id,
+                dataStream,
+              })
             : null;
 
         const result = streamText({
@@ -263,6 +300,7 @@ export async function POST(request: Request) {
             browserToolsEnabled: browserToolNames.length > 0,
             browseIntent: hasBrowseIntent(latestUserMessageText),
             mcpInstructions: mcpBundle.instructions,
+            chatUploads: uploadAccessList,
           }),
           messages: modelMessages,
           stopWhen: stepCountIs(
@@ -295,6 +333,9 @@ export async function POST(request: Request) {
               dataStream,
               modelId: chatModel,
             }),
+            ...(uploadAccessList.length > 0
+              ? { getChatUploads: createGetChatUploadsTool(uploadAccessList) }
+              : {}),
             ...(browserTools
               ? {
                   webSearch,

@@ -1,5 +1,7 @@
 import type { Geo } from "@vercel/functions";
 import type { ArtifactKind } from "@/components/chat/artifact";
+import { chatUploadsPrompt } from "@/lib/ai/prompts-uploads";
+import type { UploadAccessInfo } from "@/lib/chat/uploads";
 
 export const artifactsPrompt = `
 Artifacts is a side panel that displays content alongside the conversation. It supports scripts (code), documents (text), and spreadsheets. Changes appear in real-time.
@@ -126,12 +128,14 @@ export const systemPrompt = ({
   browserToolsEnabled = false,
   browseIntent = false,
   mcpInstructions = [],
+  chatUploads = [],
 }: {
   requestHints: RequestHints;
   supportsTools: boolean;
   browserToolsEnabled?: boolean;
   browseIntent?: boolean;
   mcpInstructions?: string[];
+  chatUploads?: UploadAccessInfo[];
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
   const mcpPrompt =
@@ -141,12 +145,14 @@ export const systemPrompt = ({
   const browserPrompt = browserToolsEnabled ? `\n\n${browserToolsPrompt}` : "";
   const intentPrompt =
     browserToolsEnabled && browseIntent ? `\n\n${browseIntentPrompt}` : "";
+  const uploadsPrompt =
+    chatUploads.length > 0 ? `\n\n${chatUploadsPrompt(chatUploads)}` : "";
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}`;
+    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}${uploadsPrompt}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}${uploadsPrompt}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

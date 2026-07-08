@@ -83,7 +83,14 @@ const PurePreviewMessage = ({
       {attachmentsFromMessage.map((attachment) => (
         <PreviewAttachment
           attachment={{
-            name: attachment.filename ?? "file",
+            id:
+              ("uploadId" in attachment && typeof attachment.uploadId === "string"
+                ? attachment.uploadId
+                : attachment.url) ?? "file",
+            name:
+              ("filename" in attachment && typeof attachment.filename === "string"
+                ? attachment.filename
+                : undefined) ?? "file",
             contentType: attachment.mediaType,
             url: attachment.url,
           }}

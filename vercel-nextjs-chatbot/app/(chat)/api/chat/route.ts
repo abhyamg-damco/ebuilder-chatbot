@@ -19,13 +19,18 @@ import {
   getCapabilities,
 } from "@/lib/ai/models";
 import { generateToolReasoningExplanation } from "@/lib/ai/generate-tool-reasoning";
-import { type RequestHints, systemPrompt } from "@/lib/ai/prompts";
+import { type RequestHints, hasBrowseIntent, systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { editDocument } from "@/lib/ai/tools/edit-document";
+import { createBrowserTools } from "@/lib/ai/tools/create-browser-tools";
+import { fetchWebPage } from "@/lib/ai/tools/fetch-web-page";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
+import { webSearch } from "@/lib/ai/tools/web-search";
+import { isBrowserbaseEnabled } from "@/lib/browserbase/config";
+import { closeAllBrowserSessions } from "@/lib/browserbase/session-store";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   closeMcpClients,
@@ -219,26 +224,51 @@ export async function POST(request: Request) {
       "requestSuggestions",
     ] as const;
 
+    // Browserbase tools — only registered when BROWSERBASE_API_KEY is set.
+    // Live-browser tools are created inside execute() so they receive dataStream.
+    // @see docs/architecture/browserbase-integration.md
+    const browserToolNames = isBrowserbaseEnabled()
+      ? ([
+          "webSearch",
+          "fetchWebPage",
+          "browserSearchOpenAndSummarize",
+          "browserSearchAndOpen",
+          "browserNavigate",
+          "browserAct",
+          "browserExtract",
+          "browserAgent",
+          "closeBrowser",
+        ] as const)
+      : ([] as const);
+
     const activeToolNames =
       isReasoningModel && !supportsTools
         ? []
-        : [...builtInToolNames, ...mcpBundle.toolNames];
+        : [...builtInToolNames, ...browserToolNames, ...mcpBundle.toolNames];
 
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const latestUserMessageText = getLatestUserMessageText(uiMessages);
+        const browserTools =
+          browserToolNames.length > 0
+            ? createBrowserTools({ chatId: id, dataStream })
+            : null;
 
         const result = streamText({
           model: getLanguageModel(chatModel),
           system: systemPrompt({
             requestHints,
             supportsTools,
+            browserToolsEnabled: browserToolNames.length > 0,
+            browseIntent: hasBrowseIntent(latestUserMessageText),
             mcpInstructions: mcpBundle.instructions,
           }),
           messages: modelMessages,
           stopWhen: stepCountIs(
-            mcpBundle.toolNames.length > 0 ? 15 : 5
+            browserToolNames.length > 0 || mcpBundle.toolNames.length > 0
+              ? 15
+              : 5
           ),
           experimental_activeTools:
             activeToolNames as (typeof builtInToolNames)[number][],
@@ -265,6 +295,13 @@ export async function POST(request: Request) {
               dataStream,
               modelId: chatModel,
             }),
+            ...(browserTools
+              ? {
+                  webSearch,
+                  fetchWebPage,
+                  ...browserTools,
+                }
+              : {}),
             ...mcpBundle.tools,
           },
           onStepFinish: async ({ toolCalls, reasoningText }) => {
@@ -274,6 +311,10 @@ export async function POST(request: Request) {
 
             await Promise.all(
               toolCalls.map(async (toolCall) => {
+                if (!toolCall) {
+                  return;
+                }
+
                 try {
                   const summary = await generateToolReasoningExplanation({
                     toolName: toolCall.toolName,
@@ -299,6 +340,8 @@ export async function POST(request: Request) {
             );
           },
           onFinish: async () => {
+            // Safety net: close cloud browsers even if the agent skips closeBrowser.
+            await closeAllBrowserSessions();
             await closeMcpClients(mcpBundle.clients);
           },
           experimental_telemetry: {

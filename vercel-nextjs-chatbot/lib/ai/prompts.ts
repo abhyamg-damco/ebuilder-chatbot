@@ -64,6 +64,47 @@ You are an autonomous agent, not a single-shot chatbot. For data questions answe
 For "what is original budget on {project}": call get_original_budget first, or chain discover_query_schema(Budgets) → resolve_project → query_records.
 `;
 
+/** Guidance injected into the system prompt when Browserbase tools are registered. */
+export const browserToolsPrompt = `
+## Browser tools (ACTIVE)
+
+CRITICAL RULES:
+1. If the user says **open**, **browse**, **visit**, **go to**, or **watch** a page → you MUST use a **live browser** tool (browserNavigate, browserSearchAndOpen, or browserSearchOpenAndSummarize). **Never use fetchWebPage** for those requests — it does not open the right-hand live view.
+2. If the user asks to **search + open + summarize** → use **browserSearchOpenAndSummarize** (one call: search, open top result in live browser, extract summary).
+3. **fetchWebPage** is only for quick background reads when the user did NOT ask to open or watch a page.
+
+**Discovery (no live browser):**
+- **webSearch** — find URLs only
+- **fetchWebPage** — silent text fetch only (no live panel)
+
+**Live cloud browser (opens right-hand panel):**
+- **browserSearchOpenAndSummarize** — search → open top result → summarize (preferred for search+open+summarize tasks)
+- **browserSearchAndOpen** — search → open a result in the live browser
+- **browserNavigate** — open a specific URL in the live browser
+- **browserAct** — click, type, scroll on the current page
+- **browserExtract** — pull data from the current page
+- **browserAgent** — multi-step flows (forms, uploads)
+- **closeBrowser** — end session when done
+
+After live browsing, call **closeBrowser** when finished.
+The user watches the session in the right-hand live view panel.
+`;
+
+/** Extra instruction when the user message implies opening/watching a page. */
+export const browseIntentPrompt = `
+CRITICAL (this message requests live browsing): Use browserNavigate, browserSearchAndOpen, or browserSearchOpenAndSummarize — NOT fetchWebPage. The user expects the live browser panel on the right.
+`;
+
+/**
+ * Detects user intent to watch a live browser (vs. a silent background fetch).
+ * When true, browseIntentPrompt is appended to the system message in the chat route.
+ *
+ * @param message - Latest user message text from the chat.
+ */
+export function hasBrowseIntent(message: string): boolean {
+  return /\b(open|browse|navigate|visit|watch|go to|load)\b/i.test(message);
+}
+
 export type RequestHints = {
   latitude: Geo["latitude"];
   longitude: Geo["longitude"];
@@ -82,10 +123,14 @@ About the origin of user's request:
 export const systemPrompt = ({
   requestHints,
   supportsTools,
+  browserToolsEnabled = false,
+  browseIntent = false,
   mcpInstructions = [],
 }: {
   requestHints: RequestHints;
   supportsTools: boolean;
+  browserToolsEnabled?: boolean;
+  browseIntent?: boolean;
   mcpInstructions?: string[];
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
@@ -93,12 +138,15 @@ export const systemPrompt = ({
     mcpInstructions.length > 0
       ? `\n\nConnected MCP servers:\n${mcpInstructions.join("\n")}\n\n${mcpAgentPrompt}`
       : "";
+  const browserPrompt = browserToolsEnabled ? `\n\n${browserToolsPrompt}` : "";
+  const intentPrompt =
+    browserToolsEnabled && browseIntent ? `\n\n${browseIntentPrompt}` : "";
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}`;
+    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

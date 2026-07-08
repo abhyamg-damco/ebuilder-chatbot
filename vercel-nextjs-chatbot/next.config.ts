@@ -4,6 +4,14 @@ import type { NextConfig } from "next";
 const basePath = process.env.IS_DEMO === "1" ? "/demo" : "";
 
 const nextConfig: NextConfig = {
+  /**
+   * Stagehand depends on ai@5; this app uses ai@6.
+   * Marking these packages external prevents Turbopack from bundling them
+   * into the chat route and causing @ai-sdk/provider-utils export conflicts.
+   * @see docs/decisions/001-dynamic-stagehand-loading.md
+   * @see docs/decisions/002-ai-sdk-dependency-isolation.md
+   */
+  serverExternalPackages: ["@browserbasehq/stagehand", "@browserbasehq/sdk"],
   // Enables a minimal production bundle for self-hosted Docker / Cloud Run.
   output: "standalone",
   ...(basePath

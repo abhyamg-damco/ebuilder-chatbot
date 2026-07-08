@@ -44,6 +44,12 @@ export type CustomUIDataTypes = {
     toolCallId: string;
     summary: string;
   };
+  browserSession: {
+    sessionId: string;
+    liveViewUrl?: string;
+    status: "running" | "ended";
+    title?: string;
+  };
 };
 
 export type ChatMessage = UIMessage<

@@ -23,6 +23,8 @@
     "@ai-sdk/openai": "3.0.74",
     "@ai-sdk/provider": "3.0.10",
     "@ai-sdk/react": "3.0.118",
+    "@browserbasehq/sdk": "^2.15.0",
+    "@browserbasehq/stagehand": "^3.6.0",
     "@codemirror/lang-python": "^6.1.6",
     "@codemirror/state": "^6.5.0",
     "@codemirror/theme-one-dark": "^6.1.2",
@@ -112,7 +114,11 @@
     "overrides": {
       "@ai-sdk/provider": "3.0.10",
       "@ai-sdk/openai": "3.0.74",
-      "@ai-sdk/provider-utils": "4.0.30"
+      "ai@6>@ai-sdk/provider-utils": "4.0.30",
+      "ai@6>@ai-sdk/gateway": "3.0.66",
+      "ai@5>@ai-sdk/provider-utils": "3.0.28",
+      "ai@5>@ai-sdk/provider": "2.0.3",
+      "ai@5>@ai-sdk/gateway": "2.0.109"
     }
   }
 }

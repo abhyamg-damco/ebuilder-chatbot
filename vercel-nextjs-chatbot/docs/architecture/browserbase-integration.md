@@ -31,6 +31,7 @@ POST /api/chat (route.ts)
     └─ Tier 2 (Stagehand + session-store)
           browserNavigate / browserAct / browserExtract / browserAgent
           browserSearchAndOpen / browserSearchOpenAndSummarize
+          browserSyncUploads / browserAttachFile
                 │
                 ├─ getOrCreateBrowserSession(chatId, dataStream)
                 │       ├─ createStagehandInstance()  [dynamic import]
@@ -55,6 +56,7 @@ POST /api/chat (route.ts)
 | `client.ts` | Singleton Browserbase SDK client (Search/Fetch/debug) |
 | `stagehand-loader.ts` | Dynamic import of Stagehand (ai@5 isolation) |
 | `session-store.ts` | Per-chat in-memory session + SSE events |
+| `session-uploads.ts` | GCS → Browserbase session file sync + CDP attach |
 | `live-view.ts` | Resolves embeddable iframe URL with retries |
 
 ### AI tools (`lib/ai/tools/`)
@@ -63,13 +65,40 @@ POST /api/chat (route.ts)
 |------|----------------|
 | `web-search.ts` | Tier-1 search tool |
 | `fetch-web-page.ts` | Tier-1 silent fetch tool |
-| `create-browser-tools.ts` | Factory for all Tier-2 live-browser tools |
+| `create-browser-tools.ts` | Factory for all Tier-2 live-browser tools (incl. `browserSyncUploads`, `browserAttachFile`) |
+
+### File uploads (chat → cloud browser)
+
+```
+User checks "Use in browser" on attachment
+    │
+    ▼
+ChatUpload.metadata.useInBrowser = true
+    │
+    ▼
+browserSyncUploads tool
+    ├─ downloadFromGcs(buffer)
+    ├─ client.sessions.uploads.create(sessionId, { file })
+    └─ file at /tmp/.uploads/{filename}
+    │
+    ▼
+browserAttachFile(uploadId, selector)
+    └─ page.sendCDP("DOM.setFileInputFiles")  [remote path in cloud browser]
+```
+
+**Important:** Attach uses Stagehand understudy `Page.sendCDP()`, not Playwright `setInputFiles()`. Playwright file paths are resolved on the app server; Browserbase session files live at `/tmp/.uploads/{name}` inside the remote VM.
+
+**UI:** `PreviewAttachment` shows a **Use in browser** checkbox when `GET /api/browserbase/status` reports `enabled: true`. Flag is stored on `ChatUpload.metadata.useInBrowser`.
+
+**Test page:** [browser-tests-alpha upload test](https://browser-tests-alpha.vercel.app/api/upload-test) — selector `#fileUpload`.
 
 ### Client UI
 
 | File | Responsibility |
 |------|----------------|
 | `hooks/use-browser-panel.ts` | SWR state for panel visibility |
+| `hooks/use-browserbase-enabled.ts` | Gates "Use in browser" checkbox on attachments |
+| `components/chat/preview-attachment.tsx` | Attachment preview + browser flag toggle |
 | `components/chat/browser-panel.tsx` | Live-view iframe (60% right column) |
 | `components/chat/data-stream-handler.tsx` | Handles `data-browserSession` events |
 | `components/chat/shell.tsx` | Shows BrowserPanel OR Artifact panel |
@@ -80,6 +109,7 @@ POST /api/chat (route.ts)
 |-------|----------------|
 | `app/(chat)/api/chat/route.ts` | Registers tools, browse-intent prompt, session cleanup |
 | `app/(chat)/api/browserbase/live-view/route.ts` | Auth-gated live-view URL poll endpoint |
+| `app/(chat)/api/browserbase/status/route.ts` | Feature flag for attachment UI |
 
 ## Configuration
 
@@ -96,3 +126,4 @@ No `BROWSERBASE_PROJECT_ID` is required — the API key resolves the project aut
 - [Decision: Live browser panel](../decisions/003-live-browser-panel.md)
 - [Decision: Browser tool tiering](../decisions/004-browser-tool-tiering.md)
 - [Decision: Session lifecycle](../decisions/005-session-lifecycle.md)
+- [Decision: Browser session file uploads](../decisions/006-browser-session-file-uploads.md)

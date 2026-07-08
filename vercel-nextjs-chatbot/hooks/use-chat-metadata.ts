@@ -12,6 +12,10 @@ export type ChatMetadataUpload = {
   isPublic: boolean;
   pageCount?: number;
   hasTextPreview: boolean;
+  useInBrowser: boolean;
+  browserRemotePath?: string;
+  browserSyncedSessionId?: string;
+  browserSyncedAt?: string;
 };
 
 export type ChatMetadataBrowserSession = {

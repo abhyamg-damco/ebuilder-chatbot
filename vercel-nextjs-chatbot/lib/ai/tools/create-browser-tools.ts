@@ -21,9 +21,14 @@ import { z } from "zod";
 import { getBrowserbaseClient } from "@/lib/browserbase/client";
 import { BROWSER_AGENT_MAX_STEPS } from "@/lib/browserbase/config";
 import {
+  attachFileToInput,
+  syncUploadsToSession,
+} from "@/lib/browserbase/session-uploads";
+import {
   closeBrowserSession,
   getOrCreateBrowserSession,
 } from "@/lib/browserbase/session-store";
+import type { ChatUpload } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 
 /** Dependencies injected from the chat API route's stream execute callback. */
@@ -31,6 +36,7 @@ type CreateBrowserToolsProps = {
   chatId: string;
   userId: string;
   dataStream: UIMessageStreamWriter<ChatMessage>;
+  chatUploadRecords: ChatUpload[];
 };
 
 /** Public replay URL shown in tool results and the panel header link. */
@@ -49,6 +55,7 @@ export function createBrowserTools({
   chatId,
   userId,
   dataStream,
+  chatUploadRecords,
 }: CreateBrowserToolsProps) {
   const browserNavigate = tool({
     description:
@@ -200,6 +207,140 @@ export function createBrowserTools({
     },
   });
 
+  const browserSyncUploads = tool({
+    description:
+      "Sync user files marked 'Use in browser' from chat storage into the active Browserbase session. Call before browserAttachFile or form uploads. Returns remote paths inside the session.",
+    inputSchema: z.object({
+      uploadIds: z
+        .array(z.string().uuid())
+        .optional()
+        .describe(
+          "Specific upload IDs to sync. Omit to sync all browser-bound uploads for this chat."
+        ),
+    }),
+    execute: async ({ uploadIds }) => {
+      const activeSession = await getOrCreateBrowserSession({
+        chatId,
+        userId,
+        dataStream,
+        title: "File sync",
+      });
+
+      const syncResult = await syncUploadsToSession({
+        session: activeSession,
+        uploads: chatUploadRecords,
+        uploadIds,
+      });
+
+      return {
+        ...syncResult,
+        sessionId: activeSession.sessionId,
+        sessionUrl: sessionReplayUrl(activeSession.sessionId),
+        liveViewUrl: activeSession.liveViewUrl,
+      };
+    },
+  });
+
+  const browserAttachFile = tool({
+    description:
+      "Attach a user-uploaded file (marked for browser use) to a file input on the current page. Syncs the file into the session if needed, then sets it on the given CSS selector.",
+    inputSchema: z.object({
+      uploadId: z
+        .string()
+        .uuid()
+        .describe("Chat upload ID from getChatUploads"),
+      selector: z
+        .string()
+        .describe("CSS selector for the file input, e.g. #fileUpload"),
+      description: z
+        .string()
+        .optional()
+        .describe("Optional note for the tool result"),
+    }),
+    execute: async ({ uploadId, selector, description }) => {
+      const activeSession = await getOrCreateBrowserSession({
+        chatId,
+        userId,
+        dataStream,
+        title: "Attach file",
+      });
+
+      const syncResult = await syncUploadsToSession({
+        session: activeSession,
+        uploads: chatUploadRecords,
+        uploadIds: [uploadId],
+      });
+
+      if (syncResult.errors.length > 0) {
+        return {
+          success: false,
+          message: syncResult.errors.at(0)?.error ?? "Failed to sync file",
+          syncResult,
+          sessionId: activeSession.sessionId,
+          sessionUrl: sessionReplayUrl(activeSession.sessionId),
+          liveViewUrl: activeSession.liveViewUrl,
+        };
+      }
+
+      const syncedEntry = activeSession.syncedFiles.get(uploadId);
+      const remotePath =
+        syncedEntry?.remotePath ??
+        syncResult.synced.find((item) => item.uploadId === uploadId)?.remotePath;
+
+      if (!remotePath) {
+        return {
+          success: false,
+          message:
+            "File not found or not marked for browser use. Ask the user to check 'Use in browser' when attaching.",
+          sessionId: activeSession.sessionId,
+          sessionUrl: sessionReplayUrl(activeSession.sessionId),
+          liveViewUrl: activeSession.liveViewUrl,
+        };
+      }
+
+      const page = activeSession.stagehand.context.pages()[0];
+
+      if (!page) {
+        throw new Error("No browser page available.");
+      }
+
+      try {
+        await attachFileToInput({
+          page,
+          remotePath,
+          selector,
+        });
+      } catch (error) {
+        return {
+          success: false,
+          message:
+            error instanceof Error
+              ? error.message
+              : "Failed to attach file to input",
+          remotePath,
+          selector,
+          syncResult,
+          sessionId: activeSession.sessionId,
+          sessionUrl: sessionReplayUrl(activeSession.sessionId),
+          liveViewUrl: activeSession.liveViewUrl,
+        };
+      }
+
+      return {
+        success: true,
+        uploadId,
+        selector,
+        remotePath,
+        description,
+        pageUrl: page.url(),
+        syncResult,
+        sessionId: activeSession.sessionId,
+        sessionUrl: sessionReplayUrl(activeSession.sessionId),
+        liveViewUrl: activeSession.liveViewUrl,
+      };
+    },
+  });
+
   const browserSearchAndOpen = tool({
     description:
       "Search the web, then open a result in the LIVE cloud browser (right-hand panel). Use when the user asks to search and open a page. Do NOT use fetchWebPage instead.",
@@ -323,6 +464,8 @@ export function createBrowserTools({
     browserAct,
     browserExtract,
     browserAgent,
+    browserSyncUploads,
+    browserAttachFile,
     closeBrowser,
   };
 }

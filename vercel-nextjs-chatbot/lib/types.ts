@@ -66,4 +66,6 @@ export type Attachment = {
   category?: "image" | "document";
   expiresAt?: string;
   sizeBytes?: number;
+  /** When true, sync this file into the Browserbase session for form uploads. */
+  useInBrowser?: boolean;
 };

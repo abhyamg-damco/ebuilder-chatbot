@@ -45,6 +45,7 @@ import {
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { FILE_ACCEPT } from "@/lib/storage/mime";
 import { cn } from "@/lib/utils";
+import { useBrowserbaseEnabled } from "@/hooks/use-browserbase-enabled";
 import {
   PromptInput,
   PromptInputFooter,
@@ -215,6 +216,7 @@ function PureMultimodalInput({
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
+  const browserbaseEnabled = useBrowserbaseEnabled();
 
   const submitForm = useCallback(() => {
     window.history.pushState(
@@ -232,6 +234,7 @@ function PureMultimodalInput({
           uploadId: attachment.id,
           filename: attachment.name,
           mediaType: attachment.contentType,
+          ...(attachment.useInBrowser ? { useInBrowser: true } : {}),
         })),
         ...(input.trim()
           ? [
@@ -481,6 +484,16 @@ function PureMultimodalInput({
                     fileInputRef.current.value = "";
                   }
                 }}
+                onUseInBrowserChange={(useInBrowser) => {
+                  setAttachments((currentAttachments) =>
+                    currentAttachments.map((item) =>
+                      item.id === attachment.id
+                        ? { ...item, useInBrowser }
+                        : item
+                    )
+                  );
+                }}
+                showBrowserToggle={browserbaseEnabled}
               />
             ))}
 

@@ -1007,6 +1007,55 @@ export async function softDeleteChatUpload({
   return updateChatUploadStatus({ id, status: "deleted" });
 }
 
+/**
+ * Merges metadata fields into an existing upload without changing status.
+ */
+export async function mergeChatUploadMetadata({
+  id,
+  metadata,
+}: {
+  id: string;
+  metadata: Partial<ChatUploadMetadata>;
+}): Promise<ChatUpload | null> {
+  const upload = await getChatUploadById({ id });
+  if (!upload) {
+    return null;
+  }
+
+  return updateChatUploadStatus({
+    id,
+    status: upload.status,
+    metadata: { ...upload.metadata, ...metadata },
+  });
+}
+
+/** Marks uploads as intended for Browserbase form use. */
+export async function markUploadsUseInBrowser({
+  uploadIds,
+}: {
+  uploadIds: string[];
+}): Promise<void> {
+  if (uploadIds.length === 0) {
+    return;
+  }
+
+  const uploads = await Promise.all(
+    uploadIds.map((uploadId) => getChatUploadById({ id: uploadId }))
+  );
+
+  await Promise.all(
+    uploads
+      .filter((upload): upload is ChatUpload => upload !== null)
+      .map((upload) =>
+        updateChatUploadStatus({
+          id: upload.id,
+          status: upload.status,
+          metadata: { ...upload.metadata, useInBrowser: true },
+        })
+      )
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Browser session metadata
 // ---------------------------------------------------------------------------

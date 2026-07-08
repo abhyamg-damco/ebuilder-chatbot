@@ -86,7 +86,15 @@ CRITICAL RULES:
 - **browserAct** — click, type, scroll on the current page
 - **browserExtract** — pull data from the current page
 - **browserAgent** — multi-step flows (forms, uploads)
+- **browserSyncUploads** — push user files marked "Use in browser" into the cloud session
+- **browserAttachFile** — attach a synced file to a file input on the current page
 - **closeBrowser** — end session when done
+
+**File upload workflow (when user attached files with "Use in browser"):**
+1. \`browserNavigate\` to the target page
+2. \`browserSyncUploads\` — copies files from chat storage into the remote browser (\`/tmp/.uploads/{filename}\`)
+3. \`browserAttachFile(uploadId, selector)\` — sets the file on \`<input type="file">\`
+4. \`browserAct\` or \`browserAgent\` to complete the form
 
 After live browsing, call **closeBrowser** when finished.
 The user watches the session in the right-hand live view panel.
@@ -97,6 +105,11 @@ export const browseIntentPrompt = `
 CRITICAL (this message requests live browsing): Use browserNavigate, browserSearchAndOpen, or browserSearchOpenAndSummarize — NOT fetchWebPage. The user expects the live browser panel on the right.
 `;
 
+/** Extra instruction when the user message implies attaching or uploading a file in the browser. */
+export const uploadIntentPrompt = `
+CRITICAL (this message requests a browser file upload): Use browserSyncUploads and browserAttachFile — NOT signed URLs or fetchWebPage. Files marked "Use in browser" must be synced into the cloud session first, then attached via CSS selector on the file input.
+`;
+
 /**
  * Detects user intent to watch a live browser (vs. a silent background fetch).
  * When true, browseIntentPrompt is appended to the system message in the chat route.
@@ -105,6 +118,15 @@ CRITICAL (this message requests live browsing): Use browserNavigate, browserSear
  */
 export function hasBrowseIntent(message: string): boolean {
   return /\b(open|browse|navigate|visit|watch|go to|load)\b/i.test(message);
+}
+
+/**
+ * Detects user intent to upload or attach a file via the live browser.
+ */
+export function hasUploadIntent(message: string): boolean {
+  return /\b(attach|upload|file input|submit.*form|use in browser)\b/i.test(
+    message
+  );
 }
 
 export type RequestHints = {
@@ -127,6 +149,7 @@ export const systemPrompt = ({
   supportsTools,
   browserToolsEnabled = false,
   browseIntent = false,
+  uploadIntent = false,
   mcpInstructions = [],
   chatUploads = [],
 }: {
@@ -134,6 +157,7 @@ export const systemPrompt = ({
   supportsTools: boolean;
   browserToolsEnabled?: boolean;
   browseIntent?: boolean;
+  uploadIntent?: boolean;
   mcpInstructions?: string[];
   chatUploads?: UploadAccessInfo[];
 }) => {
@@ -145,14 +169,16 @@ export const systemPrompt = ({
   const browserPrompt = browserToolsEnabled ? `\n\n${browserToolsPrompt}` : "";
   const intentPrompt =
     browserToolsEnabled && browseIntent ? `\n\n${browseIntentPrompt}` : "";
+  const uploadPrompt =
+    browserToolsEnabled && uploadIntent ? `\n\n${uploadIntentPrompt}` : "";
   const uploadsPrompt =
     chatUploads.length > 0 ? `\n\n${chatUploadsPrompt(chatUploads)}` : "";
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}${uploadsPrompt}`;
+    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${uploadsPrompt}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}${uploadsPrompt}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${uploadsPrompt}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

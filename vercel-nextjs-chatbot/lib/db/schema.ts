@@ -172,6 +172,14 @@ export type ChatUploadMetadata = {
   pageCount?: number;
   width?: number;
   height?: number;
+  /** User marked this file for use in Browserbase form uploads. */
+  useInBrowser?: boolean;
+  /** Remote path inside the Browserbase session, e.g. /tmp/.uploads/resume.pdf */
+  browserRemotePath?: string;
+  /** Browserbase session id the file was last synced to. */
+  browserSyncedSessionId?: string;
+  /** ISO timestamp when the file was last synced to a browser session. */
+  browserSyncedAt?: string;
 };
 
 /**

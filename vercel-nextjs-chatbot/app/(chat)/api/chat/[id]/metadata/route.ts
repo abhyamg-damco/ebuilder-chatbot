@@ -59,6 +59,10 @@ export async function GET(_request: Request, context: RouteContext) {
         isPublic: item.isPublic,
         pageCount: item.pageCount,
         hasTextPreview: Boolean(item.extractedTextPreview),
+        useInBrowser: item.useInBrowser ?? false,
+        browserRemotePath: item.browserRemotePath,
+        browserSyncedSessionId: item.browserSyncedSessionId,
+        browserSyncedAt: item.browserSyncedAt,
       })),
     },
     browserSessions: {

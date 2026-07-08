@@ -15,3 +15,4 @@
 | [003](./decisions/003-live-browser-panel.md) | Live browser panel on the right |
 | [004](./decisions/004-browser-tool-tiering.md) | Search/Fetch vs live-browser tool tiers |
 | [005](./decisions/005-session-lifecycle.md) | Per-chat session store and cleanup |
+| [006](./decisions/006-browser-session-file-uploads.md) | Chat file → Browserbase session uploads |

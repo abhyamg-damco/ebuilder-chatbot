@@ -22,8 +22,12 @@ export function chatUploadsPrompt(uploads: UploadAccessInfo[]): string {
         ? `\n  Image URL: ${upload.url}`
         : "";
 
+    const browserLine = upload.useInBrowser
+      ? "\n  **Use in browser:** yes — sync via browserSyncUploads, attach via browserAttachFile"
+      : "";
+
     return `- **${upload.originalFilename}** (${upload.mimeType}, ${upload.category}${pages})
-  Upload ID: ${upload.id}${urlLine}${preview}`;
+  Upload ID: ${upload.id}${urlLine}${browserLine}${preview}`;
   });
 
   return `## Chat uploads (ACTIVE)
@@ -35,5 +39,6 @@ ${lines.join("\n\n")}
 Rules:
 1. For document Q&A, use the **Extracted text** above or call \`getChatUploads\` for the full preview.
 2. Only **images** (JPEG/PNG) are attached as vision file parts.
-3. For browser form uploads, pass a signed URL from \`getChatUploads\` to \`browserAgent\`.`;
+3. For **browser form uploads**, files marked **Use in browser** must be synced into the cloud session — never pass GCS/signed URLs to file inputs.
+4. Workflow: \`browserNavigate\` → \`browserSyncUploads\` (if needed) → \`browserAttachFile(uploadId, selector)\` → \`browserAct\` to submit. For complex flows, use \`browserAgent\` after syncing files.`;
 }

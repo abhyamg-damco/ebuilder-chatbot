@@ -93,6 +93,8 @@ const PurePreviewMessage = ({
                 : undefined) ?? "file",
             contentType: attachment.mediaType,
             url: attachment.url,
+            useInBrowser:
+              "useInBrowser" in attachment && attachment.useInBrowser === true,
           }}
           key={attachment.url}
         />

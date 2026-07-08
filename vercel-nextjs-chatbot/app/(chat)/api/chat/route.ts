@@ -19,7 +19,7 @@ import {
   getCapabilities,
 } from "@/lib/ai/models";
 import { generateToolReasoningExplanation } from "@/lib/ai/generate-tool-reasoning";
-import { type RequestHints, hasBrowseIntent, systemPrompt } from "@/lib/ai/prompts";
+import { type RequestHints, hasBrowseIntent, hasUploadIntent, systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { editDocument } from "@/lib/ai/tools/edit-document";
@@ -39,6 +39,7 @@ import {
 } from "@/lib/mcp/load-tools";
 import {
   buildUploadAccessList,
+  collectBrowserFlagsFromMessages,
   collectUploadIdsFromMessages,
   refreshFilePartUrls,
   stripNonNativeFileParts,
@@ -51,6 +52,7 @@ import {
   getMessageCountByUserId,
   getMessagesByChatId,
   linkUploadsToMessage,
+  markUploadsUseInBrowser,
   saveChat,
   saveMessages,
   updateChatTitleById,
@@ -219,6 +221,15 @@ export async function POST(request: Request) {
           messageId: message.id,
         });
       }
+
+      const browserFlags = collectBrowserFlagsFromMessages([
+        message as ChatMessage,
+      ]);
+      if (browserFlags.size > 0) {
+        await markUploadsUseInBrowser({
+          uploadIds: [...browserFlags.keys()],
+        });
+      }
     }
 
     const chatUploadRecords = await getChatUploadsByChatId({ chatId: id });
@@ -262,6 +273,8 @@ export async function POST(request: Request) {
           "browserAct",
           "browserExtract",
           "browserAgent",
+          "browserSyncUploads",
+          "browserAttachFile",
           "closeBrowser",
         ] as const)
       : ([] as const);
@@ -289,6 +302,7 @@ export async function POST(request: Request) {
                 chatId: id,
                 userId: session.user.id,
                 dataStream,
+                chatUploadRecords,
               })
             : null;
 
@@ -299,6 +313,7 @@ export async function POST(request: Request) {
             supportsTools,
             browserToolsEnabled: browserToolNames.length > 0,
             browseIntent: hasBrowseIntent(latestUserMessageText),
+            uploadIntent: hasUploadIntent(latestUserMessageText),
             mcpInstructions: mcpBundle.instructions,
             chatUploads: uploadAccessList,
           }),

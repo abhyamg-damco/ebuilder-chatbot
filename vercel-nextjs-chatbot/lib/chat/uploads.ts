@@ -22,6 +22,10 @@ export type UploadAccessInfo = {
   isPublic: boolean;
   extractedTextPreview?: string;
   pageCount?: number;
+  useInBrowser?: boolean;
+  browserRemotePath?: string;
+  browserSyncedSessionId?: string;
+  browserSyncedAt?: string;
 };
 
 /**
@@ -130,6 +134,10 @@ export async function buildUploadAccessList(
           isPublic: upload.isPublic,
           extractedTextPreview,
           pageCount: upload.metadata?.pageCount,
+          useInBrowser: upload.metadata?.useInBrowser,
+          browserRemotePath: upload.metadata?.browserRemotePath,
+          browserSyncedSessionId: upload.metadata?.browserSyncedSessionId,
+          browserSyncedAt: upload.metadata?.browserSyncedAt,
         });
         continue;
       }
@@ -144,6 +152,10 @@ export async function buildUploadAccessList(
         url: access.url,
         expiresAt: access.expiresAt,
         isPublic: upload.isPublic,
+        useInBrowser: upload.metadata?.useInBrowser,
+        browserRemotePath: upload.metadata?.browserRemotePath,
+        browserSyncedSessionId: upload.metadata?.browserSyncedSessionId,
+        browserSyncedAt: upload.metadata?.browserSyncedAt,
       });
     } catch (error) {
       logStorageError("buildUploadAccessList", error, { uploadId: upload.id });
@@ -216,6 +228,31 @@ export async function refreshFilePartUrls({
       };
     }),
   }));
+}
+
+/**
+ * Maps uploadId → useInBrowser from file parts in the given messages.
+ */
+export function collectBrowserFlagsFromMessages(
+  messages: ChatMessage[]
+): Map<string, boolean> {
+  const flags = new Map<string, boolean>();
+
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (
+        part.type === "file" &&
+        "uploadId" in part &&
+        typeof part.uploadId === "string" &&
+        "useInBrowser" in part &&
+        part.useInBrowser === true
+      ) {
+        flags.set(part.uploadId, true);
+      }
+    }
+  }
+
+  return flags;
 }
 
 /**

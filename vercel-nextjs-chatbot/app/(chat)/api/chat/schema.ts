@@ -18,6 +18,7 @@ const filePartSchema = z.object({
   filename: z.string().min(1).max(200).optional(),
   url: z.string().url(),
   uploadId: z.string().uuid().optional(),
+  useInBrowser: z.boolean().optional(),
 });
 
 const partSchema = z.union([textPartSchema, filePartSchema]);

@@ -17,10 +17,19 @@ import {
 } from "./stagehand-loader";
 
 /** Active cloud browser session bound to a chat conversation. */
+export type SyncedBrowserFile = {
+  uploadId: string;
+  remotePath: string;
+  filename: string;
+};
+
+/** Active cloud browser session bound to a chat conversation. */
 export type ActiveBrowserSession = {
   stagehand: StagehandInstance;
   sessionId: string;
   liveViewUrl: string;
+  /** Files synced into this session via Browserbase Session Uploads API. */
+  syncedFiles: Map<string, SyncedBrowserFile>;
 };
 
 const activeSessions = new Map<string, ActiveBrowserSession>();
@@ -84,7 +93,12 @@ export async function getOrCreateBrowserSession({
   }
 
   const liveViewUrl = await getSessionLiveViewUrl(sessionId);
-  const session: ActiveBrowserSession = { stagehand, sessionId, liveViewUrl };
+  const session: ActiveBrowserSession = {
+    stagehand,
+    sessionId,
+    liveViewUrl,
+    syncedFiles: new Map(),
+  };
 
   activeSessions.set(chatId, session);
 

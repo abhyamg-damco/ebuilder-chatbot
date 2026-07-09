@@ -43,6 +43,17 @@ import {
   refreshFilePartUrls,
   stripNonNativeFileParts,
 } from "@/lib/chat/uploads";
+import { isLiveBrowserTool } from "@/lib/chat/browser-tools";
+import {
+  buildActivityLogPart,
+  createActivityCollector,
+  emitAgentActivity,
+  finalizeActivityCollector,
+} from "@/lib/chat/emit-agent-activity";
+import {
+  formatThinkingActivityMessage,
+  formatToolActivityMessage,
+} from "@/lib/chat/format-agent-activity";
 import {
   createStreamId,
   deleteChatById,
@@ -296,6 +307,8 @@ export async function POST(request: Request) {
             ...mcpBundle.toolNames,
           ];
 
+    const activityCollector = createActivityCollector();
+
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
@@ -331,6 +344,7 @@ export async function POST(request: Request) {
                 dataStream,
                 chatUploadRecords,
                 activeSecrets,
+                activityCollector,
               })
             : null;
 
@@ -392,8 +406,33 @@ export async function POST(request: Request) {
             ...mcpBundle.tools,
           },
           onStepFinish: async ({ toolCalls, reasoningText }) => {
+            if (reasoningText?.trim()) {
+              emitAgentActivity(dataStream, activityCollector, {
+                message: formatThinkingActivityMessage(reasoningText),
+                status: "active",
+                category: "thinking",
+              });
+            }
+
             if (!toolCalls.length) {
               return;
+            }
+
+            for (const toolCall of toolCalls) {
+              if (!toolCall) {
+                continue;
+              }
+
+              if (!isLiveBrowserTool(toolCall.toolName)) {
+                emitAgentActivity(dataStream, activityCollector, {
+                  message: formatToolActivityMessage(
+                    toolCall.toolName,
+                    toolCall.input
+                  ),
+                  status: "active",
+                  category: "tool",
+                });
+              }
             }
 
             await Promise.all(
@@ -459,8 +498,40 @@ export async function POST(request: Request) {
       },
       generateId: generateUUID,
       onFinish: async ({ messages: finishedMessages }) => {
+        const activityLogPart = buildActivityLogPart(
+          finalizeActivityCollector(activityCollector)
+        );
+
+        const messagesToSave = activityLogPart
+          ? finishedMessages.map((currentMessage, index) => {
+              const lastAssistantIndex = finishedMessages.findLastIndex(
+                (message) => message.role === "assistant"
+              );
+              const isTargetAssistant =
+                index === lastAssistantIndex &&
+                currentMessage.role === "assistant";
+
+              if (!isTargetAssistant) {
+                return currentMessage;
+              }
+
+              const hasExistingLog = currentMessage.parts.some(
+                (part) => (part as { type: string }).type === "activity-log"
+              );
+
+              if (hasExistingLog) {
+                return currentMessage;
+              }
+
+              return {
+                ...currentMessage,
+                parts: [...currentMessage.parts, activityLogPart],
+              };
+            })
+          : finishedMessages;
+
         if (isToolApprovalFlow) {
-          for (const finishedMsg of finishedMessages) {
+          for (const finishedMsg of messagesToSave) {
             const existingMsg = uiMessages.find((m) => m.id === finishedMsg.id);
             if (existingMsg) {
               await updateMessage({
@@ -482,9 +553,9 @@ export async function POST(request: Request) {
               });
             }
           }
-        } else if (finishedMessages.length > 0) {
+        } else if (messagesToSave.length > 0) {
           await saveMessages({
-            messages: finishedMessages.map((currentMessage) => ({
+            messages: messagesToSave.map((currentMessage) => ({
               id: currentMessage.id,
               role: currentMessage.role,
               parts: currentMessage.parts,

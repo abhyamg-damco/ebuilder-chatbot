@@ -37,7 +37,12 @@ import {
   isToolPart,
 } from "@/lib/chat/tool-parts";
 import { useOpenBrowserPanel } from "@/hooks/use-open-browser-panel";
+import {
+  useAgentActivityForMessage,
+  usePendingAgentActivities,
+} from "@/hooks/use-agent-activity";
 import { BrowserSessionChip } from "./browser-session-chip";
+import { AgentActivityLog } from "./agent-activity-log";
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -87,6 +92,16 @@ const PurePreviewMessage = ({
 
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
+
+  const agentActivities = useAgentActivityForMessage({
+    messageId: message.id,
+    parts: message.parts,
+    isStreaming: isAssistant && isLoading,
+  });
+
+  const hasBrowserActivities = agentActivities.some(
+    (activity) => activity.category === "browser"
+  );
 
   const hasAnyContent = message.parts?.some(
     (part) =>
@@ -178,6 +193,10 @@ const PurePreviewMessage = ({
       message.parts,
       index
     );
+
+    if ((part as { type: string }).type === "activity-log") {
+      return null;
+    }
 
     if (type === "reasoning") {
       if (
@@ -472,17 +491,33 @@ const PurePreviewMessage = ({
     />
   );
 
+  const activityLog =
+    isAssistant && agentActivities.length > 0 ? (
+      <AgentActivityLog
+        activities={agentActivities}
+        isStreaming={isLoading}
+      />
+    ) : null;
+
   const content = isThinking ? (
-    <div className="flex h-[calc(13px*1.65)] items-center gap-2 text-[13px] leading-[1.65]">
-      <Shimmer className="font-medium" duration={1.2}>
-        Getting started…
-      </Shimmer>
-    </div>
+    agentActivities.length > 0 ? (
+      <AgentActivityLog
+        activities={agentActivities}
+        isStreaming={true}
+      />
+    ) : (
+      <div className="flex h-[calc(13px*1.65)] items-center gap-2 text-[13px] leading-[1.65]">
+        <Shimmer className="font-medium" duration={1.2}>
+          Getting started…
+        </Shimmer>
+      </div>
+    )
   ) : (
     <>
       {attachments}
       {browserSessionChip}
-      {isAssistant ? (
+      {activityLog}
+      {isAssistant && !hasBrowserActivities ? (
         <ToolActivityBanner isLoading={isLoading} parts={message.parts} />
       ) : null}
       {parts}
@@ -524,6 +559,8 @@ const PurePreviewMessage = ({
 export const PreviewMessage = PurePreviewMessage;
 
 export const ThinkingMessage = () => {
+  const pendingActivities = usePendingAgentActivities();
+
   return (
     <div
       className="group/message w-full"
@@ -537,11 +574,20 @@ export const ThinkingMessage = () => {
           </div>
         </div>
 
-        <div className="flex h-[calc(13px*1.65)] items-center gap-2 text-[13px] leading-[1.65]">
-          <Shimmer className="font-medium" duration={1.2}>
-            Getting started…
-          </Shimmer>
-        </div>
+        {pendingActivities.length > 0 ? (
+          <div className="min-w-0 flex-1">
+            <AgentActivityLog
+              activities={pendingActivities}
+              isStreaming={true}
+            />
+          </div>
+        ) : (
+          <div className="flex h-[calc(13px*1.65)] items-center gap-2 text-[13px] leading-[1.65]">
+            <Shimmer className="font-medium" duration={1.2}>
+              Getting started…
+            </Shimmer>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -28,6 +28,26 @@ import {
   closeBrowserSession,
   getOrCreateBrowserSession,
 } from "@/lib/browserbase/session-store";
+import type { ActivityCollector } from "@/lib/chat/emit-agent-activity";
+import {
+  emitAgentActivity,
+  markLastActiveAsDone,
+  markLastActiveAsError,
+} from "@/lib/chat/emit-agent-activity";
+import {
+  formatBrowserActMessage,
+  formatBrowserAgentAction,
+  formatBrowserAgentStart,
+  formatBrowserAgentStep,
+  formatBrowserAttachFileStart,
+  formatBrowserExtractMessage,
+  formatBrowserNavigateDone,
+  formatBrowserNavigateStart,
+  formatBrowserSearchOpenDone,
+  formatBrowserSearchStart,
+  formatBrowserSyncUploadsStart,
+  formatCloseBrowserMessage,
+} from "@/lib/chat/format-agent-activity";
 import type { ChatUpload } from "@/lib/db/schema";
 import {
   expandSecretsInText,
@@ -44,6 +64,8 @@ type CreateBrowserToolsProps = {
   chatUploadRecords: ChatUpload[];
   /** Resolved vault secrets for this turn — expanded into tool instructions. */
   activeSecrets?: ActiveUserSecret[];
+  /** Collects activity events for persistence and live SSE streaming. */
+  activityCollector: ActivityCollector;
 };
 
 /** Public replay URL shown in tool results and the panel header link. */
@@ -92,6 +114,7 @@ export function createBrowserTools({
   dataStream,
   chatUploadRecords,
   activeSecrets = [],
+  activityCollector,
 }: CreateBrowserToolsProps) {
   /** Expand @secret:slug / bare vault slugs before Stagehand sees the text. */
   const withSecrets = (text: string) =>
@@ -101,6 +124,19 @@ export function createBrowserTools({
   const forTranscript = (text: string) =>
     redactSecretsInText(text, activeSecrets);
 
+  const formatOptions = { redact: forTranscript };
+
+  const emitBrowserActivity = (
+    message: string,
+    status: "active" | "done" | "error"
+  ) => {
+    emitAgentActivity(dataStream, activityCollector, {
+      message,
+      status,
+      category: "browser",
+    });
+  };
+
   const browserNavigate = tool({
     description:
       "Open or navigate the live cloud browser to a URL. Starts a browser session if one is not already active. The user can watch the live view on the right.",
@@ -109,30 +145,43 @@ export function createBrowserTools({
     }),
     execute: async ({ url }) => {
       const resolvedUrl = withSecrets(url);
-      const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({
-          chatId,
-          userId,
-          dataStream,
-          title: new URL(resolvedUrl).hostname,
-          startedUrl: resolvedUrl,
-        });
+      emitBrowserActivity(
+        formatBrowserNavigateStart(resolvedUrl, formatOptions),
+        "active"
+      );
 
-      const page = stagehand.context.pages()[0];
+      try {
+        const { stagehand, sessionId, liveViewUrl } =
+          await getOrCreateBrowserSession({
+            chatId,
+            userId,
+            dataStream,
+            title: new URL(resolvedUrl).hostname,
+            startedUrl: resolvedUrl,
+          });
 
-      if (!page) {
-        throw new Error("No browser page available.");
+        const page = stagehand.context.pages()[0];
+
+        if (!page) {
+          throw new Error("No browser page available.");
+        }
+
+        await page.goto(resolvedUrl, { waitUntil: "domcontentloaded" });
+        const pageTitle = await page.title();
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity(formatBrowserNavigateDone(pageTitle), "done");
+
+        return {
+          url: resolvedUrl,
+          sessionId,
+          sessionUrl: sessionReplayUrl(sessionId),
+          liveViewUrl,
+          pageTitle,
+        };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
       }
-
-      await page.goto(resolvedUrl, { waitUntil: "domcontentloaded" });
-
-      return {
-        url: resolvedUrl,
-        sessionId,
-        sessionUrl: sessionReplayUrl(sessionId),
-        liveViewUrl,
-        pageTitle: await page.title(),
-      };
     },
   });
 
@@ -148,37 +197,55 @@ export function createBrowserTools({
     }),
     execute: async ({ instruction }) => {
       const resolvedInstruction = withSecrets(instruction);
-      const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({ chatId, userId, dataStream });
+      emitBrowserActivity(
+        formatBrowserActMessage(resolvedInstruction, formatOptions),
+        "active"
+      );
 
-      // observe→act pattern: discover the element once, then replay without full LLM act().
-      const observed = await stagehand.observe(resolvedInstruction);
-      const action = observed[0];
+      try {
+        const { stagehand, sessionId, liveViewUrl } =
+          await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
-      if (!action) {
+        const observed = await stagehand.observe(resolvedInstruction);
+        const action = observed[0];
+
+        if (!action) {
+          const pageState = await getPageState(stagehand);
+          markLastActiveAsError(activityCollector);
+          emitBrowserActivity("Could not find matching element on page", "error");
+
+          return {
+            success: false,
+            message: `No matching element found for: ${forTranscript(resolvedInstruction)}`,
+            sessionId,
+            sessionUrl: sessionReplayUrl(sessionId),
+            liveViewUrl,
+            ...pageState,
+          };
+        }
+
+        await stagehand.act(action);
         const pageState = await getPageState(stagehand);
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity(
+          pageState.pageTitle
+            ? `Action complete on ${pageState.pageTitle}`
+            : "Action complete",
+          "done"
+        );
 
         return {
-          success: false,
-          message: `No matching element found for: ${forTranscript(resolvedInstruction)}`,
+          success: true,
+          instruction: forTranscript(resolvedInstruction),
           sessionId,
           sessionUrl: sessionReplayUrl(sessionId),
           liveViewUrl,
           ...pageState,
         };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
       }
-
-      await stagehand.act(action);
-      const pageState = await getPageState(stagehand);
-
-      return {
-        success: true,
-        instruction: forTranscript(resolvedInstruction),
-        sessionId,
-        sessionUrl: sessionReplayUrl(sessionId),
-        liveViewUrl,
-        ...pageState,
-      };
     },
   });
 
@@ -194,23 +261,36 @@ export function createBrowserTools({
     }),
     execute: async ({ instruction }) => {
       const resolvedInstruction = withSecrets(instruction);
-      const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({ chatId, userId, dataStream });
-
-      const extracted = await stagehand.extract(
-        resolvedInstruction,
-        z.object({
-          data: z.string().describe("Extracted content as readable text or JSON"),
-        })
+      emitBrowserActivity(
+        formatBrowserExtractMessage(resolvedInstruction, formatOptions),
+        "active"
       );
 
-      return {
-        instruction: forTranscript(resolvedInstruction),
-        extracted,
-        sessionId,
-        sessionUrl: sessionReplayUrl(sessionId),
-        liveViewUrl,
-      };
+      try {
+        const { stagehand, sessionId, liveViewUrl } =
+          await getOrCreateBrowserSession({ chatId, userId, dataStream });
+
+        const extracted = await stagehand.extract(
+          resolvedInstruction,
+          z.object({
+            data: z.string().describe("Extracted content as readable text or JSON"),
+          })
+        );
+
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity("Page content extracted", "done");
+
+        return {
+          instruction: forTranscript(resolvedInstruction),
+          extracted,
+          sessionId,
+          sessionUrl: sessionReplayUrl(sessionId),
+          liveViewUrl,
+        };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
+      }
     },
   });
 
@@ -232,27 +312,71 @@ export function createBrowserTools({
     }),
     execute: async ({ instruction, maxSteps = BROWSER_AGENT_MAX_STEPS }) => {
       const resolvedInstruction = withSecrets(instruction);
-      const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({ chatId, userId, dataStream });
+      emitBrowserActivity(
+        formatBrowserAgentStart(resolvedInstruction, formatOptions),
+        "active"
+      );
 
-      const agent = stagehand.agent({
-        systemPrompt: BROWSER_AGENT_SYSTEM_PROMPT,
-      });
+      try {
+        const { stagehand, sessionId, liveViewUrl } =
+          await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
-      const result = await agent.execute({
-        instruction: resolvedInstruction,
-        maxSteps,
-      });
-      const pageState = await getPageState(stagehand);
+        const agent = stagehand.agent({
+          systemPrompt: BROWSER_AGENT_SYSTEM_PROMPT,
+        });
 
-      return {
-        instruction: forTranscript(resolvedInstruction),
-        result,
-        sessionId,
-        sessionUrl: sessionReplayUrl(sessionId),
-        liveViewUrl,
-        ...pageState,
-      };
+        const result = await agent.execute({
+          instruction: resolvedInstruction,
+          maxSteps,
+          callbacks: {
+            onStepFinish: async ({ toolCalls }) => {
+              for (const call of toolCalls ?? []) {
+                if (!call?.toolName) {
+                  continue;
+                }
+
+                emitBrowserActivity(
+                  formatBrowserAgentStep(
+                    call.toolName,
+                    call.input,
+                    formatOptions
+                  ),
+                  "active"
+                );
+              }
+            },
+          },
+        });
+
+        if (result.actions?.length) {
+          for (const action of result.actions) {
+            const line = formatBrowserAgentAction(action);
+
+            if (line) {
+              emitBrowserActivity(line, "done");
+            }
+          }
+        }
+
+        const pageState = await getPageState(stagehand);
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity(
+          result.success ? "Automation finished" : "Automation stopped",
+          result.success ? "done" : "error"
+        );
+
+        return {
+          instruction: forTranscript(resolvedInstruction),
+          result,
+          sessionId,
+          sessionUrl: sessionReplayUrl(sessionId),
+          liveViewUrl,
+          ...pageState,
+        };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
+      }
     },
   });
 
@@ -261,8 +385,17 @@ export function createBrowserTools({
       "Close the active cloud browser session when browsing is complete.",
     inputSchema: z.object({}),
     execute: async () => {
-      await closeBrowserSession({ chatId, dataStream });
-      return { closed: true };
+      emitBrowserActivity(formatCloseBrowserMessage(), "active");
+
+      try {
+        await closeBrowserSession({ chatId, dataStream });
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity("Browser session closed", "done");
+        return { closed: true };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
+      }
     },
   });
 
@@ -278,25 +411,40 @@ export function createBrowserTools({
         ),
     }),
     execute: async ({ uploadIds }) => {
-      const activeSession = await getOrCreateBrowserSession({
-        chatId,
-        userId,
-        dataStream,
-        title: "File sync",
-      });
+      emitBrowserActivity(formatBrowserSyncUploadsStart(), "active");
 
-      const syncResult = await syncUploadsToSession({
-        session: activeSession,
-        uploads: chatUploadRecords,
-        uploadIds,
-      });
+      try {
+        const activeSession = await getOrCreateBrowserSession({
+          chatId,
+          userId,
+          dataStream,
+          title: "File sync",
+        });
 
-      return {
-        ...syncResult,
-        sessionId: activeSession.sessionId,
-        sessionUrl: sessionReplayUrl(activeSession.sessionId),
-        liveViewUrl: activeSession.liveViewUrl,
-      };
+        const syncResult = await syncUploadsToSession({
+          session: activeSession,
+          uploads: chatUploadRecords,
+          uploadIds,
+        });
+
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity(
+          syncResult.synced.length > 0
+            ? `Synced ${syncResult.synced.length} file(s) to browser`
+            : "File sync complete",
+          "done"
+        );
+
+        return {
+          ...syncResult,
+          sessionId: activeSession.sessionId,
+          sessionUrl: sessionReplayUrl(activeSession.sessionId),
+          liveViewUrl: activeSession.liveViewUrl,
+        };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
+      }
     },
   });
 
@@ -317,86 +465,105 @@ export function createBrowserTools({
         .describe("Optional note for the tool result"),
     }),
     execute: async ({ uploadId, selector, description }) => {
-      const activeSession = await getOrCreateBrowserSession({
-        chatId,
-        userId,
-        dataStream,
-        title: "Attach file",
-      });
-
-      const syncResult = await syncUploadsToSession({
-        session: activeSession,
-        uploads: chatUploadRecords,
-        uploadIds: [uploadId],
-      });
-
-      if (syncResult.errors.length > 0) {
-        return {
-          success: false,
-          message: syncResult.errors.at(0)?.error ?? "Failed to sync file",
-          syncResult,
-          sessionId: activeSession.sessionId,
-          sessionUrl: sessionReplayUrl(activeSession.sessionId),
-          liveViewUrl: activeSession.liveViewUrl,
-        };
-      }
-
-      const syncedEntry = activeSession.syncedFiles.get(uploadId);
-      const remotePath =
-        syncedEntry?.remotePath ??
-        syncResult.synced.find((item) => item.uploadId === uploadId)?.remotePath;
-
-      if (!remotePath) {
-        return {
-          success: false,
-          message:
-            "File not found or not marked for browser use. Ask the user to check 'Use in browser' when attaching.",
-          sessionId: activeSession.sessionId,
-          sessionUrl: sessionReplayUrl(activeSession.sessionId),
-          liveViewUrl: activeSession.liveViewUrl,
-        };
-      }
-
-      const page = activeSession.stagehand.context.pages()[0];
-
-      if (!page) {
-        throw new Error("No browser page available.");
-      }
+      emitBrowserActivity(formatBrowserAttachFileStart(selector), "active");
 
       try {
-        await attachFileToInput({
-          page,
-          remotePath,
-          selector,
+        const activeSession = await getOrCreateBrowserSession({
+          chatId,
+          userId,
+          dataStream,
+          title: "Attach file",
         });
-      } catch (error) {
+
+        const syncResult = await syncUploadsToSession({
+          session: activeSession,
+          uploads: chatUploadRecords,
+          uploadIds: [uploadId],
+        });
+
+        if (syncResult.errors.length > 0) {
+          markLastActiveAsError(activityCollector);
+          emitBrowserActivity("Failed to sync file for upload", "error");
+
+          return {
+            success: false,
+            message: syncResult.errors.at(0)?.error ?? "Failed to sync file",
+            syncResult,
+            sessionId: activeSession.sessionId,
+            sessionUrl: sessionReplayUrl(activeSession.sessionId),
+            liveViewUrl: activeSession.liveViewUrl,
+          };
+        }
+
+        const syncedEntry = activeSession.syncedFiles.get(uploadId);
+        const remotePath =
+          syncedEntry?.remotePath ??
+          syncResult.synced.find((item) => item.uploadId === uploadId)?.remotePath;
+
+        if (!remotePath) {
+          markLastActiveAsError(activityCollector);
+          emitBrowserActivity("File not available for browser upload", "error");
+
+          return {
+            success: false,
+            message:
+              "File not found or not marked for browser use. Ask the user to check 'Use in browser' when attaching.",
+            sessionId: activeSession.sessionId,
+            sessionUrl: sessionReplayUrl(activeSession.sessionId),
+            liveViewUrl: activeSession.liveViewUrl,
+          };
+        }
+
+        const page = activeSession.stagehand.context.pages()[0];
+
+        if (!page) {
+          throw new Error("No browser page available.");
+        }
+
+        try {
+          await attachFileToInput({
+            page,
+            remotePath,
+            selector,
+          });
+        } catch (error) {
+          markLastActiveAsError(activityCollector);
+          emitBrowserActivity("Failed to attach file to input", "error");
+
+          return {
+            success: false,
+            message:
+              error instanceof Error
+                ? error.message
+                : "Failed to attach file to input",
+            remotePath,
+            selector,
+            syncResult,
+            sessionId: activeSession.sessionId,
+            sessionUrl: sessionReplayUrl(activeSession.sessionId),
+            liveViewUrl: activeSession.liveViewUrl,
+          };
+        }
+
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity("File attached to form", "done");
+
         return {
-          success: false,
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to attach file to input",
-          remotePath,
+          success: true,
+          uploadId,
           selector,
+          remotePath,
+          description,
+          pageUrl: page.url(),
           syncResult,
           sessionId: activeSession.sessionId,
           sessionUrl: sessionReplayUrl(activeSession.sessionId),
           liveViewUrl: activeSession.liveViewUrl,
         };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
       }
-
-      return {
-        success: true,
-        uploadId,
-        selector,
-        remotePath,
-        description,
-        pageUrl: page.url(),
-        syncResult,
-        sessionId: activeSession.sessionId,
-        sessionUrl: sessionReplayUrl(activeSession.sessionId),
-        liveViewUrl: activeSession.liveViewUrl,
-      };
     },
   });
 
@@ -413,43 +580,54 @@ export function createBrowserTools({
         .describe("Which search result to open (0 = first, default 0)"),
     }),
     execute: async ({ query, resultIndex = 0 }) => {
-      const client = getBrowserbaseClient();
-      const searchData = await client.search.web({ query, numResults: 5 });
-      const result = searchData.results.at(resultIndex);
+      emitBrowserActivity(formatBrowserSearchStart(query), "active");
 
-      if (!result) {
-        throw new Error(`No search result at index ${resultIndex} for "${query}".`);
+      try {
+        const client = getBrowserbaseClient();
+        const searchData = await client.search.web({ query, numResults: 5 });
+        const result = searchData.results.at(resultIndex);
+
+        if (!result) {
+          markLastActiveAsError(activityCollector);
+          throw new Error(`No search result at index ${resultIndex} for "${query}".`);
+        }
+
+        const { stagehand, sessionId, liveViewUrl } =
+          await getOrCreateBrowserSession({
+            chatId,
+            userId,
+            dataStream,
+            title: result.title,
+            startedUrl: result.url,
+          });
+
+        const page = stagehand.context.pages()[0];
+
+        if (!page) {
+          throw new Error("No browser page available.");
+        }
+
+        await page.goto(result.url, { waitUntil: "domcontentloaded" });
+        const pageTitle = await page.title();
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity(formatBrowserSearchOpenDone(pageTitle), "done");
+
+        return {
+          query,
+          opened: {
+            title: result.title,
+            url: result.url,
+            rank: resultIndex + 1,
+          },
+          sessionId,
+          sessionUrl: sessionReplayUrl(sessionId),
+          liveViewUrl,
+          pageTitle,
+        };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
       }
-
-      const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({
-          chatId,
-          userId,
-          dataStream,
-          title: result.title,
-          startedUrl: result.url,
-        });
-
-      const page = stagehand.context.pages()[0];
-
-      if (!page) {
-        throw new Error("No browser page available.");
-      }
-
-      await page.goto(result.url, { waitUntil: "domcontentloaded" });
-
-      return {
-        query,
-        opened: {
-          title: result.title,
-          url: result.url,
-          rank: resultIndex + 1,
-        },
-        sessionId,
-        sessionUrl: sessionReplayUrl(sessionId),
-        liveViewUrl,
-        pageTitle: await page.title(),
-      };
     },
   });
 
@@ -469,50 +647,66 @@ export function createBrowserTools({
         .describe("Which search result to open (0 = first, default 0)"),
     }),
     execute: async ({ query, summarizeInstruction, resultIndex = 0 }) => {
-      const client = getBrowserbaseClient();
-      const searchData = await client.search.web({ query, numResults: 5 });
-      const result = searchData.results.at(resultIndex);
+      emitBrowserActivity(formatBrowserSearchStart(query), "active");
 
-      if (!result) {
-        throw new Error(`No search result at index ${resultIndex} for "${query}".`);
+      try {
+        const client = getBrowserbaseClient();
+        const searchData = await client.search.web({ query, numResults: 5 });
+        const result = searchData.results.at(resultIndex);
+
+        if (!result) {
+          markLastActiveAsError(activityCollector);
+          throw new Error(`No search result at index ${resultIndex} for "${query}".`);
+        }
+
+        const { stagehand, sessionId, liveViewUrl } =
+          await getOrCreateBrowserSession({
+            chatId,
+            userId,
+            dataStream,
+            title: result.title,
+            startedUrl: result.url,
+          });
+
+        const page = stagehand.context.pages()[0];
+
+        if (!page) {
+          throw new Error("No browser page available.");
+        }
+
+        await page.goto(result.url, { waitUntil: "domcontentloaded" });
+        emitBrowserActivity(formatBrowserSearchOpenDone(result.title), "done");
+        emitBrowserActivity(
+          formatBrowserExtractMessage(summarizeInstruction, formatOptions),
+          "active"
+        );
+
+        const extracted = await stagehand.extract(
+          summarizeInstruction,
+          z.object({
+            data: z.string().describe("Summary or extracted content"),
+          })
+        );
+
+        markLastActiveAsDone(activityCollector);
+        emitBrowserActivity("Summary extracted from page", "done");
+
+        return {
+          query,
+          opened: {
+            title: result.title,
+            url: result.url,
+            rank: resultIndex + 1,
+          },
+          summary: extracted,
+          sessionId,
+          sessionUrl: sessionReplayUrl(sessionId),
+          liveViewUrl,
+        };
+      } catch (error) {
+        markLastActiveAsError(activityCollector);
+        throw error;
       }
-
-      const { stagehand, sessionId, liveViewUrl } =
-        await getOrCreateBrowserSession({
-          chatId,
-          userId,
-          dataStream,
-          title: result.title,
-          startedUrl: result.url,
-        });
-
-      const page = stagehand.context.pages()[0];
-
-      if (!page) {
-        throw new Error("No browser page available.");
-      }
-
-      await page.goto(result.url, { waitUntil: "domcontentloaded" });
-
-      const extracted = await stagehand.extract(
-        summarizeInstruction,
-        z.object({
-          data: z.string().describe("Summary or extracted content"),
-        })
-      );
-
-      return {
-        query,
-        opened: {
-          title: result.title,
-          url: result.url,
-          rank: resultIndex + 1,
-        },
-        summary: extracted,
-        sessionId,
-        sessionUrl: sessionReplayUrl(sessionId),
-        liveViewUrl,
-      };
     },
   });
 

@@ -50,6 +50,12 @@ export type CustomUIDataTypes = {
     status: "running" | "ended";
     title?: string;
   };
+  "agent-activity": {
+    id: string;
+    message: string;
+    status: "active" | "done" | "error";
+    category?: "browser" | "tool" | "thinking";
+  };
 };
 
 export type ChatMessage = UIMessage<

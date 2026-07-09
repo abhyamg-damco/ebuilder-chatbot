@@ -2,6 +2,8 @@ import type { InferSelectModel } from "drizzle-orm";
 import {
   boolean,
   foreignKey,
+  index,
+  integer,
   json,
   pgTable,
   primaryKey,
@@ -32,6 +34,9 @@ export const user = pgTable(
 
 export type User = InferSelectModel<typeof user>;
 
+/** Chat session mode: general e-Builder chat vs Trimble browser automation. */
+export type ChatSessionType = "general" | "trimble_automation";
+
 export const chat = pgTable("Chat", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
   createdAt: timestamp("createdAt").notNull(),
@@ -42,6 +47,9 @@ export const chat = pgTable("Chat", {
   visibility: varchar("visibility", { enum: ["public", "private"] })
     .notNull()
     .default("private"),
+  sessionType: varchar("sessionType", {
+    enum: ["general", "trimble_automation"],
+  }),
 });
 
 export type Chat = InferSelectModel<typeof chat>;
@@ -163,3 +171,200 @@ export const mcpServer = pgTable("McpServer", {
 });
 
 export type McpServer = InferSelectModel<typeof mcpServer>;
+
+/**
+ * User-defined agent skill (markdown instructions referenced via @slug in chat).
+ * Scoped per signed-in user; injected into the system prompt when mentioned.
+ */
+export const agentSkill = pgTable(
+  "AgentSkill",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    name: varchar("name", { length: 128 }).notNull(),
+    slug: varchar("slug", { length: 64 }).notNull(),
+    description: text("description"),
+    content: text("content").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    userSlugUnique: uniqueIndex("AgentSkill_userId_slug_unique").on(
+      table.userId,
+      table.slug
+    ),
+    userIdx: index("AgentSkill_userId_idx").on(table.userId),
+  })
+);
+
+export type AgentSkill = InferSelectModel<typeof agentSkill>;
+
+/**
+ * Per-user secret vault entry (URL, username, password, API key, etc.).
+ * Values are stored as plaintext for now; encryption can be added later
+ * without changing the public reference-by-slug API.
+ */
+export const userSecret = pgTable(
+  "UserSecret",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    name: varchar("name", { length: 128 }).notNull(),
+    slug: varchar("slug", { length: 64 }).notNull(),
+    kind: varchar("kind", {
+      enum: ["password", "username", "url", "api_key", "other"],
+    })
+      .notNull()
+      .default("other"),
+    value: text("value").notNull(),
+    description: text("description"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    userSlugUnique: uniqueIndex("UserSecret_userId_slug_unique").on(
+      table.userId,
+      table.slug
+    ),
+    userIdx: index("UserSecret_userId_idx").on(table.userId),
+  })
+);
+
+export type UserSecret = InferSelectModel<typeof userSecret>;
+
+/** Upload metadata stored alongside GCS objects. */
+export type ChatUploadMetadata = {
+  extractedTextPreview?: string;
+  pageCount?: number;
+  width?: number;
+  height?: number;
+  /** User marked this file for use in Browserbase form uploads. */
+  useInBrowser?: boolean;
+  /** Remote path inside the Browserbase session, e.g. /tmp/.uploads/resume.pdf */
+  browserRemotePath?: string;
+  /** Browserbase session id the file was last synced to. */
+  browserSyncedSessionId?: string;
+  /** ISO timestamp when the file was last synced to a browser session. */
+  browserSyncedAt?: string;
+};
+
+/**
+ * User-uploaded files scoped to a chat conversation.
+ * Objects live in GCS; this table stores metadata and access control.
+ */
+export const chatUpload = pgTable(
+  "ChatUpload",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    chatId: uuid("chatId")
+      .notNull()
+      .references(() => chat.id),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    messageId: uuid("messageId").references(() => message.id),
+    originalFilename: text("originalFilename").notNull(),
+    mimeType: varchar("mimeType", { length: 128 }).notNull(),
+    sizeBytes: integer("sizeBytes").notNull(),
+    bucket: varchar("bucket", { length: 255 }).notNull(),
+    objectPath: text("objectPath").notNull(),
+    isPublic: boolean("isPublic").notNull().default(false),
+    category: varchar("category", { enum: ["image", "document"] }).notNull(),
+    status: varchar("status", {
+      enum: ["uploading", "ready", "failed", "deleted"],
+    })
+      .notNull()
+      .default("uploading"),
+    checksumSha256: varchar("checksumSha256", { length: 64 }),
+    metadata: json("metadata").$type<ChatUploadMetadata>().notNull().default({}),
+    uploadedAt: timestamp("uploadedAt").notNull().defaultNow(),
+    deletedAt: timestamp("deletedAt"),
+  },
+  (table) => ({
+    chatUploadedAtIdx: index("ChatUpload_chatId_uploadedAt_idx").on(
+      table.chatId,
+      table.uploadedAt
+    ),
+    userIdx: index("ChatUpload_userId_idx").on(table.userId),
+  })
+);
+
+export type ChatUpload = InferSelectModel<typeof chatUpload>;
+
+/** Browserbase session metadata persisted per chat. */
+export type ChatBrowserSessionMetadata = {
+  toolsUsed?: string[];
+  stepCount?: number;
+  pagesVisited?: number;
+};
+
+/**
+ * Cloud browser session history for a chat.
+ * Runtime Stagehand handles remain in-memory; this table stores durable metadata.
+ */
+export const chatBrowserSession = pgTable(
+  "ChatBrowserSession",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    chatId: uuid("chatId")
+      .notNull()
+      .references(() => chat.id),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    browserbaseSessionId: varchar("browserbaseSessionId", { length: 128 }).notNull(),
+    status: varchar("status", {
+      enum: ["starting", "running", "ended", "error"],
+    })
+      .notNull()
+      .default("starting"),
+    title: text("title"),
+    startedUrl: text("startedUrl"),
+    lastKnownUrl: text("lastKnownUrl"),
+    liveViewUrl: text("liveViewUrl"),
+    replayUrl: text("replayUrl").notNull(),
+    messageId: uuid("messageId").references(() => message.id),
+    toolCallId: varchar("toolCallId", { length: 128 }),
+    startedAt: timestamp("startedAt").notNull().defaultNow(),
+    endedAt: timestamp("endedAt"),
+    lastActivityAt: timestamp("lastActivityAt").notNull().defaultNow(),
+    durationSeconds: integer("durationSeconds"),
+    errorMessage: text("errorMessage"),
+    metadata: json("metadata")
+      .$type<ChatBrowserSessionMetadata>()
+      .notNull()
+      .default({}),
+  },
+  (table) => ({
+    chatStartedAtIdx: index("ChatBrowserSession_chatId_startedAt_idx").on(
+      table.chatId,
+      table.startedAt
+    ),
+    browserbaseSessionUnique: uniqueIndex(
+      "ChatBrowserSession_browserbaseSessionId_unique"
+    ).on(table.browserbaseSessionId),
+  })
+);
+
+export type ChatBrowserSession = InferSelectModel<typeof chatBrowserSession>;
+
+/** Per-user platform preferences (browser timeouts, etc.). */
+export const userPlatformSettings = pgTable("UserPlatformSettings", {
+  userId: uuid("userId")
+    .primaryKey()
+    .notNull()
+    .references(() => user.id),
+  browserIdleTimeoutSeconds: integer("browserIdleTimeoutSeconds")
+    .notNull()
+    .default(120),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
+export type UserPlatformSettingsRow = InferSelectModel<
+  typeof userPlatformSettings
+>;

@@ -23,6 +23,7 @@ export type ChatModel = {
 
 /** Static capability map for OpenAI models (no gateway lookup required). */
 const openaiCapabilities: Record<string, ModelCapabilities> = {
+  "gpt-5.5": { tools: true, vision: true, reasoning: true },
   "gpt-5.2-chat-latest": { tools: true, vision: true, reasoning: true },
   "gpt-4o": { tools: true, vision: true, reasoning: false },
   "gpt-4o-mini": { tools: true, vision: true, reasoning: false },
@@ -31,6 +32,14 @@ const openaiCapabilities: Record<string, ModelCapabilities> = {
 };
 
 export const chatModels: ChatModel[] = [
+  {
+    id: "gpt-5.5",
+    name: "GPT-5.5",
+    provider: "openai",
+    description:
+      "Latest frontier model for complex professional work (reasoning_effort disabled for tool use)",
+    reasoningEffort: "none",
+  },
   {
     id: "gpt-5.2-chat-latest",
     name: "GPT-5.2 Chat",
@@ -93,6 +102,29 @@ export async function getAllGatewayModels(): Promise<
 
 export function getActiveModels(): ChatModel[] {
   return chatModels;
+}
+
+/**
+ * OpenAI provider options for streamText.
+ * GPT-5.5 rejects reasoning_effort with function tools on /v1/chat/completions.
+ */
+export function getOpenAIProviderOptions(
+  model: ChatModel | undefined,
+  { hasTools }: { hasTools: boolean }
+) {
+  if (!model) {
+    return undefined;
+  }
+
+  if (model.id === "gpt-5.5" && hasTools) {
+    return { openai: { reasoningEffort: "none" as const } };
+  }
+
+  if (!model.reasoningEffort) {
+    return undefined;
+  }
+
+  return { openai: { reasoningEffort: model.reasoningEffort } };
 }
 
 export const allowedModelIds = new Set(chatModels.map((m) => m.id));

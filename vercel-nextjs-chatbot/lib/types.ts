@@ -44,6 +44,12 @@ export type CustomUIDataTypes = {
     toolCallId: string;
     summary: string;
   };
+  browserSession: {
+    sessionId: string;
+    liveViewUrl?: string;
+    status: "running" | "ended";
+    title?: string;
+  };
 };
 
 export type ChatMessage = UIMessage<
@@ -53,7 +59,13 @@ export type ChatMessage = UIMessage<
 >;
 
 export type Attachment = {
+  id: string;
   name: string;
   url: string;
   contentType: string;
+  category?: "image" | "document";
+  expiresAt?: string;
+  sizeBytes?: number;
+  /** When true, sync this file into the Browserbase session for form uploads. */
+  useInBrowser?: boolean;
 };

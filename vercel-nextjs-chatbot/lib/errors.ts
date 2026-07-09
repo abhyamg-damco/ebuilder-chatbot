@@ -17,7 +17,9 @@ export type Surface =
   | "document"
   | "suggestions"
   | "activate_gateway"
-  | "mcp";
+  | "mcp"
+  | "skills"
+  | "secrets";
 
 export type ErrorCode = `${ErrorType}:${Surface}`;
 
@@ -35,6 +37,8 @@ export const visibilityBySurface: Record<Surface, ErrorVisibility> = {
   suggestions: "response",
   activate_gateway: "response",
   mcp: "response",
+  skills: "response",
+  secrets: "response",
 };
 
 export class ChatbotError extends Error {
@@ -122,6 +126,24 @@ export function getMessageByErrorCode(errorCode: ErrorCode): string {
       return "You need to sign in to manage MCP servers.";
     case "bad_request:mcp":
       return "The MCP server configuration is invalid. Please check your input and try again.";
+
+    case "not_found:skills":
+      return "The requested skill was not found.";
+    case "forbidden:skills":
+      return "This skill belongs to another user.";
+    case "unauthorized:skills":
+      return "You need to sign in to manage agent skills.";
+    case "bad_request:skills":
+      return "The skill configuration is invalid. Please check your input and try again.";
+
+    case "not_found:secrets":
+      return "The requested secret was not found.";
+    case "forbidden:secrets":
+      return "This secret belongs to another user.";
+    case "unauthorized:secrets":
+      return "You need to sign in to manage secrets.";
+    case "bad_request:secrets":
+      return "The secret configuration is invalid. Please check your input and try again.";
 
     default:
       return "Something went wrong. Please try again later.";

@@ -13,6 +13,7 @@ import {
   ToolOutput,
 } from "../ai-elements/tool";
 import { useDataStream } from "./data-stream-provider";
+import { renderTextWithSkillMentions } from "./skill-mentions";
 import { DocumentToolResult } from "./document";
 import { DocumentPreview } from "./document-preview";
 import { SparklesIcon } from "./icons";
@@ -27,10 +28,16 @@ import {
   extractReasoningBeforeTool,
 } from "@/lib/chat/tool-reasoning";
 import {
+  getBrowserSessionFromToolOutput,
+  isLiveBrowserTool,
+} from "@/lib/chat/browser-tools";
+import {
   getToolPartName,
   isMcpToolPart,
   isToolPart,
 } from "@/lib/chat/tool-parts";
+import { useOpenBrowserPanel } from "@/hooks/use-open-browser-panel";
+import { BrowserSessionChip } from "./browser-session-chip";
 
 const PurePreviewMessage = ({
   addToolApprovalResponse,
@@ -55,6 +62,23 @@ const PurePreviewMessage = ({
   requiresScrollPadding: boolean;
   onEdit?: (message: ChatMessage) => void;
 }) => {
+  const { openBrowserPanel } = useOpenBrowserPanel(chatId);
+
+  const latestBrowserSession = message.parts?.reduce<
+    ReturnType<typeof getBrowserSessionFromToolOutput> | null
+  >((latest, part) => {
+    if (!isToolPart(part) || !("state" in part) || part.state !== "output-available") {
+      return latest;
+    }
+
+    const toolName = getToolPartName(part);
+    if (!isLiveBrowserTool(toolName) || !("output" in part)) {
+      return latest;
+    }
+
+    return getBrowserSessionFromToolOutput(toolName, part.output) ?? latest;
+  }, null);
+
   const attachmentsFromMessage = message.parts.filter(
     (part) => part.type === "file"
   );
@@ -83,15 +107,47 @@ const PurePreviewMessage = ({
       {attachmentsFromMessage.map((attachment) => (
         <PreviewAttachment
           attachment={{
-            name: attachment.filename ?? "file",
+            id:
+              ("uploadId" in attachment && typeof attachment.uploadId === "string"
+                ? attachment.uploadId
+                : attachment.url) ?? "file",
+            name:
+              ("filename" in attachment && typeof attachment.filename === "string"
+                ? attachment.filename
+                : undefined) ?? "file",
             contentType: attachment.mediaType,
             url: attachment.url,
+            useInBrowser:
+              "useInBrowser" in attachment && attachment.useInBrowser === true,
           }}
           key={attachment.url}
+          onOpenBrowser={
+            "useInBrowser" in attachment && attachment.useInBrowser === true
+              ? () => {
+                  openBrowserPanel();
+                }
+              : undefined
+          }
         />
       ))}
     </div>
   );
+
+  const browserSessionChip =
+    latestBrowserSession && isAssistant ? (
+      <div className="flex flex-row gap-2" data-testid="message-browser-session">
+        <BrowserSessionChip
+          onClick={() => {
+            openBrowserPanel({
+              sessionId: latestBrowserSession.sessionId,
+              liveViewUrl: latestBrowserSession.liveViewUrl,
+              title: latestBrowserSession.title,
+            });
+          }}
+          title={latestBrowserSession.title}
+        />
+      </div>
+    ) : null;
 
   const mergedReasoning = message.parts?.reduce(
     (acc, part) => {
@@ -141,6 +197,9 @@ const PurePreviewMessage = ({
     }
 
     if (type === "text") {
+      const sanitized = sanitizeText(part.text);
+      const hasSkillMention = /(?:^|\s)@[a-z0-9][a-z0-9-]*/i.test(sanitized);
+
       return (
         <MessageContent
           className={cn("text-[13px] leading-[1.65]", {
@@ -150,7 +209,13 @@ const PurePreviewMessage = ({
           data-testid="message-content"
           key={key}
         >
-          <MessageResponse>{sanitizeText(part.text)}</MessageResponse>
+          {message.role === "user" && hasSkillMention ? (
+            <div className="whitespace-pre-wrap">
+              {renderTextWithSkillMentions(sanitized)}
+            </div>
+          ) : (
+            <MessageResponse>{sanitized}</MessageResponse>
+          )}
         </MessageContent>
       );
     }
@@ -350,6 +415,10 @@ const PurePreviewMessage = ({
           ? toolPart.toolName
           : getToolPartName(part);
 
+      if (isLiveBrowserTool(toolName)) {
+        return null;
+      }
+
       if (isMcpToolPart(part)) {
         return (
           <div className="w-[min(100%,520px)]" key={toolCallId}>
@@ -412,6 +481,7 @@ const PurePreviewMessage = ({
   ) : (
     <>
       {attachments}
+      {browserSessionChip}
       {isAssistant ? (
         <ToolActivityBanner isLoading={isLoading} parts={message.parts} />
       ) : null}

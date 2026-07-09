@@ -54,34 +54,63 @@ jobs:
         run: |
           set -euo pipefail
 
-          FULL_SECRET=$(gcloud secrets versions access latest \
+          # Write plaintext dotenv directly (avoids base64/pipefail edge cases).
+          gcloud secrets versions access latest \
             --secret="$SECRET_NAME" \
-            --format="get(payload.data)" | base64 --decode)
+            --out-file=/tmp/all.env
 
-          if [[ -z "${FULL_SECRET//[$'\t\r\n ']}" ]]; then
-            echo "::error::Secret $SECRET_NAME decoded to empty payload; check secret exists and base64 payload."
+          if [[ ! -s /tmp/all.env ]]; then
+            echo "::error::Secret $SECRET_NAME decoded to empty payload; check secret exists and contents."
             exit 1
           fi
 
-          echo "$FULL_SECRET" > /tmp/all.env
           echo "Decoded secret byte size: $(wc -c < /tmp/all.env) (includes newlines)"
 
           KEY_NAMES_FILE=$(mktemp)
           COUNT=0
 
-          while IFS= read -r line; do
-            [[ -z "$line" || "${line:0:1}" == "#" ]] && continue
-
-            KEY=${line%%=*}
-            VALUE=${line#*=}
-
-            if [[ -z "$KEY" || -z "$VALUE" ]]; then
-              echo "⚠️ skipping malformed line: $line" >&2
+          # Parse KEY=VALUE dotenv: skip blanks/comments; keep values that contain '=', '?', '#' in URLs.
+          while IFS= read -r line || [[ -n "$line" ]]; do
+            line=${line%$'\r'}
+            if [[ -z "$line" || "${line:0:1}" == "#" ]]; then
+              continue
+            fi
+            if [[ "$line" != *"="* ]]; then
+              echo "skipping non KEY=VALUE line" >&2
               continue
             fi
 
-            echo "$KEY=$VALUE" >> "$GITHUB_ENV"
-            echo "::add-mask::$VALUE"
+            KEY=${line%%=*}
+            VALUE=${line#*=}
+            KEY=${KEY%"${KEY##*[![:space:]]}"}
+            KEY=${KEY#"${KEY%%[![:space:]]*}"}
+
+            # Strip optional surrounding single/double quotes from values.
+            if [[ ${#VALUE} -ge 2 ]]; then
+              if [[ "${VALUE:0:1}" == '"' && "${VALUE: -1}" == '"' ]]; then
+                VALUE=${VALUE:1:$((${#VALUE} - 2))}
+              elif [[ "${VALUE:0:1}" == "'" && "${VALUE: -1}" == "'" ]]; then
+                VALUE=${VALUE:1:$((${#VALUE} - 2))}
+              fi
+            fi
+
+            if [[ -z "$KEY" || -z "$VALUE" ]]; then
+              echo "skipping malformed line (empty key or value)" >&2
+              continue
+            fi
+
+            # Heredoc form is safe for values with '=', newlines, and base64 padding.
+            DELIM="EOF_ENV_${KEY}_${RANDOM}"
+            {
+              echo "${KEY}<<${DELIM}"
+              printf '%s\n' "$VALUE"
+              echo "${DELIM}"
+            } >> "$GITHUB_ENV"
+
+            # Mask without printing the value; escape '%' so Actions workflow commands stay valid.
+            MASKED=${VALUE//%/%25}
+            echo "::add-mask::${MASKED}"
+
             echo "$KEY" >> "$KEY_NAMES_FILE"
             COUNT=$((COUNT + 1))
           done < /tmp/all.env
@@ -100,7 +129,7 @@ jobs:
             echo "::warning::/tmp/cloud-run-env.yaml missing after conversion"
           fi
 
-          for k in POSTGRES_URL AUTH_SECRET OPENAI_API_KEY; do
+          for k in POSTGRES_URL AUTH_SECRET AUTH_TRUST_HOST OPENAI_API_KEY; do
             if grep -qx "$k" /tmp/env-key-names.txt 2>/dev/null; then
               echo "$k is present in secret"
             else
@@ -158,7 +187,7 @@ jobs:
             --allow-unauthenticated \
             --port "$CLOUD_RUN_PORT" \
             --service-account="$SERVICE_ACCOUNT" \
-            --memory=1Gi \
+            --memory=512Mi \
             --cpu=1 \
             --min-instances=0 \
             --max-instances=10 \

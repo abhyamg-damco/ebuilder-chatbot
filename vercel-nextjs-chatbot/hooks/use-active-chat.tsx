@@ -3,12 +3,13 @@
 import type { UseChatHelpers } from "@ai-sdk/react";
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   createContext,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -23,13 +24,19 @@ import { toast } from "@/components/chat/toast";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { useAutoResume } from "@/hooks/use-auto-resume";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
-import type { Vote } from "@/lib/db/schema";
+import type { ChatSessionType, Vote } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
 import type { ChatMessage } from "@/lib/types";
 import { fetcher, fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
 
+/** Default model for Trimble automation sessions. */
+export const TRIMBLE_DEFAULT_MODEL = "gpt-5.5";
+
+export type SessionTypeSelection = ChatSessionType | null;
+
 type ActiveChatContextValue = {
   chatId: string;
+  isNewChat: boolean;
   messages: ChatMessage[];
   setMessages: UseChatHelpers<ChatMessage>["setMessages"];
   sendMessage: UseChatHelpers<ChatMessage>["sendMessage"];
@@ -47,6 +54,16 @@ type ActiveChatContextValue = {
   setCurrentModelId: (id: string) => void;
   showCreditCardAlert: boolean;
   setShowCreditCardAlert: Dispatch<SetStateAction<boolean>>;
+  setReferencedSkillIds: (ids: string[]) => void;
+  setReferencedSecretIds: (ids: string[]) => void;
+  /** null = show picker (New chat with selectSession); otherwise chosen mode. */
+  sessionType: SessionTypeSelection;
+  setSessionType: (type: ChatSessionType) => void;
+  /** Trimble pre-form completed; composer unlocked. */
+  trimbleSetupComplete: boolean;
+  setTrimbleSetupComplete: (complete: boolean) => void;
+  /** True when New chat asked for a mode picker (`?selectSession=1`). */
+  showSessionPicker: boolean;
 };
 
 const ActiveChatContext = createContext<ActiveChatContextValue | null>(null);
@@ -56,8 +73,21 @@ function extractChatId(pathname: string): string | null {
   return match ? match[1] : null;
 }
 
+/** Strip selectSession from the URL without a full navigation. */
+function clearSelectSessionQuery() {
+  const params = new URLSearchParams(window.location.search);
+  if (!params.has("selectSession")) {
+    return;
+  }
+  params.delete("selectSession");
+  const qs = params.toString();
+  const base = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}${window.location.pathname}`;
+  window.history.replaceState({}, "", qs ? `${base}?${qs}` : base);
+}
+
 export function ActiveChatProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { setDataStream } = useDataStream();
   const { mutate } = useSWRConfig();
 
@@ -73,6 +103,19 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   const chatId = chatIdFromUrl ?? newChatIdRef.current;
 
+  const wantsSessionPicker =
+    isNewChat && searchParams.get("selectSession") === "1";
+
+  const [sessionType, setSessionTypeState] = useState<SessionTypeSelection>(
+    () => (wantsSessionPicker ? null : "general")
+  );
+  const [trimbleSetupComplete, setTrimbleSetupComplete] = useState(false);
+
+  const sessionTypeRef = useRef(sessionType);
+  useEffect(() => {
+    sessionTypeRef.current = sessionType;
+  }, [sessionType]);
+
   const [currentModelId, setCurrentModelId] = useState(DEFAULT_CHAT_MODEL);
   const currentModelIdRef = useRef(currentModelId);
   useEffect(() => {
@@ -81,6 +124,67 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   const [input, setInput] = useState("");
   const [showCreditCardAlert, setShowCreditCardAlert] = useState(false);
+  const referencedSkillIdsRef = useRef<string[]>([]);
+  const referencedSecretIdsRef = useRef<string[]>([]);
+
+  const setReferencedSkillIds = useCallback((ids: string[]) => {
+    referencedSkillIdsRef.current = ids;
+  }, []);
+
+  const setReferencedSecretIds = useCallback((ids: string[]) => {
+    referencedSecretIdsRef.current = ids;
+  }, []);
+
+  const setSessionType = useCallback((type: ChatSessionType) => {
+    setSessionTypeState(type);
+    sessionTypeRef.current = type;
+    if (type === "trimble_automation") {
+      setCurrentModelId(TRIMBLE_DEFAULT_MODEL);
+      setTrimbleSetupComplete(false);
+    } else {
+      setCurrentModelId(DEFAULT_CHAT_MODEL);
+      setTrimbleSetupComplete(true);
+    }
+    clearSelectSessionQuery();
+  }, []);
+
+  // Reset session state only when entering a new empty chat — not when the
+  // user picks a type and we strip `?selectSession=1` (that used to wipe Trimble
+  // back to general and skip the setup form).
+  const selectSessionKey = wantsSessionPicker ? "1" : "0";
+  const prevSelectKeyRef = useRef(selectSessionKey);
+  const prevIsNewChatRef = useRef(isNewChat);
+
+  useEffect(() => {
+    const becameNewChat = isNewChat && !prevIsNewChatRef.current;
+    const pickerRequested =
+      selectSessionKey === "1" && prevSelectKeyRef.current !== "1";
+    prevIsNewChatRef.current = isNewChat;
+    prevSelectKeyRef.current = selectSessionKey;
+
+    if (!isNewChat) {
+      return;
+    }
+
+    // User chose a session type → query cleared (1→0). Keep their selection.
+    if (!becameNewChat && !pickerRequested) {
+      return;
+    }
+
+    newChatIdRef.current = generateUUID();
+    if (wantsSessionPicker) {
+      setSessionTypeState(null);
+      setTrimbleSetupComplete(false);
+      setCurrentModelId(DEFAULT_CHAT_MODEL);
+    } else {
+      // Base URL `/` (or new chat without picker flag) → eBuilder default.
+      setSessionTypeState("general");
+      setTrimbleSetupComplete(true);
+      setCurrentModelId(DEFAULT_CHAT_MODEL);
+    }
+    referencedSkillIdsRef.current = [];
+    referencedSecretIdsRef.current = [];
+  }, [isNewChat, selectSessionKey, wantsSessionPicker]);
 
   const { data: chatData, isLoading } = useSWR(
     isNewChat
@@ -89,6 +193,21 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     fetcher,
     { revalidateOnFocus: false }
   );
+
+  // Hydrate session type from an existing chat.
+  useEffect(() => {
+    if (isNewChat || !chatData) {
+      return;
+    }
+    const stored = chatData.sessionType as ChatSessionType | null | undefined;
+    if (stored === "trimble_automation" || stored === "general") {
+      setSessionTypeState(stored);
+      setTrimbleSetupComplete(true);
+      if (stored === "trimble_automation") {
+        setCurrentModelId(TRIMBLE_DEFAULT_MODEL);
+      }
+    }
+  }, [chatData, isNewChat]);
 
   const initialMessages: ChatMessage[] = isNewChat
     ? []
@@ -146,6 +265,15 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
               : { message: lastMessage }),
             selectedChatModel: currentModelIdRef.current,
             selectedVisibilityType: visibility,
+            ...(sessionTypeRef.current
+              ? { sessionType: sessionTypeRef.current }
+              : {}),
+            ...(referencedSkillIdsRef.current.length > 0
+              ? { referencedSkillIds: referencedSkillIdsRef.current }
+              : {}),
+            ...(referencedSecretIdsRef.current.length > 0
+              ? { referencedSecretIds: referencedSecretIdsRef.current }
+              : {}),
             ...request.body,
           },
         };
@@ -244,9 +372,12 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     { revalidateOnFocus: false }
   );
 
+  const showSessionPicker = isNewChat && sessionType === null;
+
   const value = useMemo<ActiveChatContextValue>(
     () => ({
       chatId,
+      isNewChat,
       messages,
       setMessages,
       sendMessage,
@@ -264,9 +395,17 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       setCurrentModelId,
       showCreditCardAlert,
       setShowCreditCardAlert,
+      setReferencedSkillIds,
+      setReferencedSecretIds,
+      sessionType,
+      setSessionType,
+      trimbleSetupComplete,
+      setTrimbleSetupComplete,
+      showSessionPicker,
     }),
     [
       chatId,
+      isNewChat,
       messages,
       setMessages,
       sendMessage,
@@ -277,11 +416,16 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       input,
       visibility,
       isReadonly,
-      isNewChat,
       isLoading,
       votes,
       currentModelId,
       showCreditCardAlert,
+      setReferencedSkillIds,
+      setReferencedSecretIds,
+      sessionType,
+      setSessionType,
+      trimbleSetupComplete,
+      showSessionPicker,
     ]
   );
 

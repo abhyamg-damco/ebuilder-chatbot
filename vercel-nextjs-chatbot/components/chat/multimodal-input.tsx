@@ -11,6 +11,7 @@ import {
   WrenchIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useTheme } from "next-themes";
 import {
   type ChangeEvent,
@@ -43,7 +44,12 @@ import {
   type ModelCapabilities,
 } from "@/lib/ai/models";
 import type { Attachment, ChatMessage } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { FILE_ACCEPT } from "@/lib/storage/mime";
+import type { AgentSkillPublic } from "@/lib/skills/types";
+import { cn, fetcher } from "@/lib/utils";
+import { useBrowserbaseEnabled } from "@/hooks/use-browserbase-enabled";
+import { useActiveChat } from "@/hooks/use-active-chat";
+import { guestRegex } from "@/lib/constants";
 import {
   PromptInput,
   PromptInputFooter,
@@ -54,6 +60,13 @@ import {
 import { Button } from "../ui/button";
 import { PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
+import {
+  filterSkillsByQuery,
+  getSkillMentionState,
+  SelectedSkillChips,
+  SkillMentionMenu,
+  type SkillMentionOption,
+} from "./skill-mentions";
 import {
   type SlashCommand,
   SlashCommandMenu,
@@ -108,7 +121,20 @@ function PureMultimodalInput({
   isLoading?: boolean;
 }) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const { setReferencedSkillIds } = useActiveChat();
   const { setTheme, resolvedTheme } = useTheme();
+  const isGuest = guestRegex.test(session?.user?.email ?? "");
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
+  const { data: skillsData } = useSWR<{ skills: AgentSkillPublic[] }>(
+    isGuest ? null : `${basePath}/api/skills`,
+    fetcher
+  );
+
+  const enabledSkills = (skillsData?.skills ?? []).filter(
+    (skill) => skill.enabled
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
   const hasAutoFocused = useRef(false);
@@ -147,9 +173,36 @@ function PureMultimodalInput({
       setSlashOpen(true);
       setSlashQuery(val.slice(1));
       setSlashIndex(0);
+      setSkillOpen(false);
     } else {
       setSlashOpen(false);
+      const mentionState = getSkillMentionState(val);
+      if (mentionState && !isGuest) {
+        setSkillOpen(true);
+        setSkillQuery(mentionState.query);
+        setSkillIndex(0);
+      } else {
+        setSkillOpen(false);
+      }
     }
+  };
+
+  const handleSkillSelect = (skill: SkillMentionOption) => {
+    const mentionState = getSkillMentionState(input);
+    const nextInput = mentionState
+      ? `${input.slice(0, mentionState.mentionStart)}@${skill.slug} `
+      : `${input}@${skill.slug} `;
+
+    setInput(nextInput);
+    setSkillOpen(false);
+    setSelectedSkills((current) => {
+      if (current.some((item) => item.id === skill.id)) {
+        return current;
+      }
+
+      return [...current, skill];
+    });
+    textareaRef.current?.focus();
   };
 
   const handleSlashSelect = (cmd: SlashCommand) => {
@@ -157,7 +210,7 @@ function PureMultimodalInput({
     setInput("");
     switch (cmd.action) {
       case "new":
-        router.push("/");
+        router.push("/?selectSession=1");
         break;
       case "clear":
         setMessages(() => []);
@@ -214,6 +267,13 @@ function PureMultimodalInput({
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
+  const [skillOpen, setSkillOpen] = useState(false);
+  const [skillQuery, setSkillQuery] = useState("");
+  const [skillIndex, setSkillIndex] = useState(0);
+  const [selectedSkills, setSelectedSkills] = useState<SkillMentionOption[]>(
+    []
+  );
+  const browserbaseEnabled = useBrowserbaseEnabled();
 
   const submitForm = useCallback(() => {
     window.history.pushState(
@@ -222,25 +282,35 @@ function PureMultimodalInput({
       `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
     );
 
+    setReferencedSkillIds(selectedSkills.map((skill) => skill.id));
+
     sendMessage({
       role: "user",
       parts: [
         ...attachments.map((attachment) => ({
           type: "file" as const,
           url: attachment.url,
-          name: attachment.name,
+          uploadId: attachment.id,
+          filename: attachment.name,
           mediaType: attachment.contentType,
+          ...(attachment.useInBrowser ? { useInBrowser: true } : {}),
         })),
-        {
-          type: "text",
-          text: input,
-        },
+        ...(input.trim()
+          ? [
+              {
+                type: "text" as const,
+                text: input,
+              },
+            ]
+          : []),
       ],
     });
 
     setAttachments([]);
     setLocalStorageInput("");
     setInput("");
+    setSelectedSkills([]);
+    setReferencedSkillIds([]);
 
     if (width && width > 768) {
       textareaRef.current?.focus();
@@ -250,41 +320,61 @@ function PureMultimodalInput({
     setInput,
     attachments,
     sendMessage,
+    setReferencedSkillIds,
+    selectedSkills,
     setAttachments,
     setLocalStorageInput,
     width,
     chatId,
   ]);
 
-  const uploadFile = useCallback(async (file: File) => {
-    const formData = new FormData();
-    formData.append("file", file);
+  const uploadFile = useCallback(
+    async (file: File) => {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("chatId", chatId);
+      formData.append("visibility", selectedVisibilityType);
 
-    try {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/files/upload`,
-        {
-          method: "POST",
-          body: formData,
+      try {
+        const response = await fetch(
+          `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/files/upload`,
+          {
+            method: "POST",
+            body: formData,
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          const {
+            id,
+            url,
+            pathname,
+            contentType,
+            expiresAt,
+            category,
+            sizeBytes,
+            originalFilename,
+          } = data;
+
+          return {
+            id,
+            url,
+            name: originalFilename ?? pathname,
+            contentType,
+            expiresAt,
+            category,
+            sizeBytes,
+          };
         }
-      );
-
-      if (response.ok) {
-        const data = await response.json();
-        const { url, pathname, contentType } = data;
-
-        return {
-          url,
-          name: pathname,
-          contentType,
-        };
+        const { error } = await response.json();
+        toast.error(error);
+      } catch (_error) {
+        toast.error("Failed to upload file, please try again!");
       }
-      const { error } = await response.json();
-      toast.error(error);
-    } catch (_error) {
-      toast.error("Failed to upload file, please try again!");
-    }
-  }, []);
+    },
+    [chatId, selectedVisibilityType]
+  );
 
   const handleFileChange = useCallback(
     async (event: ChangeEvent<HTMLInputElement>) => {
@@ -399,6 +489,7 @@ function PureMultimodalInput({
         )}
 
       <input
+        accept={FILE_ACCEPT}
         className="pointer-events-none fixed -top-4 -left-4 size-0.5 opacity-0"
         multiple
         onChange={handleFileChange}
@@ -414,6 +505,15 @@ function PureMultimodalInput({
             onSelect={handleSlashSelect}
             query={slashQuery}
             selectedIndex={slashIndex}
+          />
+        )}
+        {skillOpen && (
+          <SkillMentionMenu
+            onClose={() => setSkillOpen(false)}
+            onSelect={handleSkillSelect}
+            query={skillQuery}
+            selectedIndex={skillIndex}
+            skills={enabledSkills}
           />
         )}
       </div>
@@ -439,6 +539,14 @@ function PureMultimodalInput({
           }
         }}
       >
+        <SelectedSkillChips
+          onRemove={(skillId) => {
+            setSelectedSkills((current) =>
+              current.filter((skill) => skill.id !== skillId)
+            );
+          }}
+          skills={selectedSkills}
+        />
         {(attachments.length > 0 || uploadQueue.length > 0) && (
           <div
             className="flex w-full self-start flex-row gap-2 overflow-x-auto px-3 pt-3 no-scrollbar"
@@ -447,27 +555,38 @@ function PureMultimodalInput({
             {attachments.map((attachment) => (
               <PreviewAttachment
                 attachment={attachment}
-                key={attachment.url}
+                key={attachment.id}
                 onRemove={() => {
                   setAttachments((currentAttachments) =>
-                    currentAttachments.filter((a) => a.url !== attachment.url)
+                    currentAttachments.filter((a) => a.id !== attachment.id)
                   );
                   if (fileInputRef.current) {
                     fileInputRef.current.value = "";
                   }
                 }}
+                onUseInBrowserChange={(useInBrowser) => {
+                  setAttachments((currentAttachments) =>
+                    currentAttachments.map((item) =>
+                      item.id === attachment.id
+                        ? { ...item, useInBrowser }
+                        : item
+                    )
+                  );
+                }}
+                showBrowserToggle={browserbaseEnabled}
               />
             ))}
 
             {uploadQueue.map((filename) => (
               <PreviewAttachment
                 attachment={{
+                  id: `uploading-${filename}`,
                   url: "",
                   name: filename,
                   contentType: "",
                 }}
                 isUploading={true}
-                key={filename}
+                key={`uploading-${filename}`}
               />
             ))}
           </div>
@@ -504,6 +623,31 @@ function PureMultimodalInput({
                 return;
               }
             }
+            if (skillOpen) {
+              const filtered = filterSkillsByQuery(enabledSkills, skillQuery);
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSkillIndex((index) => Math.min(index + 1, filtered.length - 1));
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSkillIndex((index) => Math.max(index - 1, 0));
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                if (filtered[skillIndex]) {
+                  handleSkillSelect(filtered[skillIndex]);
+                }
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setSkillOpen(false);
+                return;
+              }
+            }
             if (e.key === "Escape" && editingMessage && onCancelEdit) {
               e.preventDefault();
               onCancelEdit();
@@ -534,12 +678,15 @@ function PureMultimodalInput({
             <PromptInputSubmit
               className={cn(
                 "h-7 w-7 rounded-xl transition-all duration-200",
-                input.trim()
+                input.trim() || attachments.length > 0
                   ? "bg-foreground text-background hover:opacity-85 active:scale-95"
                   : "bg-muted text-muted-foreground/25 cursor-not-allowed"
               )}
               data-testid="send-button"
-              disabled={!input.trim() || uploadQueue.length > 0}
+              disabled={
+                uploadQueue.length > 0 ||
+                (!input.trim() && attachments.length === 0)
+              }
               status={status}
               variant="secondary"
             >
@@ -587,32 +734,19 @@ export const MultimodalInput = memo(
 function PureAttachmentsButton({
   fileInputRef,
   status,
-  selectedModelId,
 }: {
   fileInputRef: React.MutableRefObject<HTMLInputElement | null>;
   status: UseChatHelpers<ChatMessage>["status"];
   selectedModelId: string;
 }) {
-  const { data: modelsResponse } = useSWR(
-    `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/models`,
-    (url: string) => fetch(url).then((r) => r.json()),
-    { revalidateOnFocus: false, dedupingInterval: 3_600_000 }
-  );
-
-  const caps: Record<string, ModelCapabilities> | undefined =
-    modelsResponse?.capabilities ?? modelsResponse;
-  const hasVision = caps?.[selectedModelId]?.vision ?? false;
-
   return (
     <Button
       className={cn(
         "h-7 w-7 rounded-lg border border-border/40 p-1 transition-colors",
-        hasVision
-          ? "text-foreground hover:border-border hover:text-foreground"
-          : "text-muted-foreground/30 cursor-not-allowed"
+        "text-foreground hover:border-border hover:text-foreground"
       )}
       data-testid="attachments-button"
-      disabled={status !== "ready" || !hasVision}
+      disabled={status !== "ready"}
       onClick={(event) => {
         event.preventDefault();
         fileInputRef.current?.click();

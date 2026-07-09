@@ -1,6 +1,12 @@
 "use client";
 
-import { ChevronUp, PlugIcon } from "lucide-react";
+import {
+  ChevronUp,
+  KeyRound,
+  PlugIcon,
+  SettingsIcon,
+  SparklesIcon,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { User } from "next-auth";
 import { signOut, useSession } from "next-auth/react";
@@ -87,6 +93,16 @@ export function SidebarUserNav({ user }: { user: User }) {
             >
               {`Toggle ${resolvedTheme === "light" ? "dark" : "light"} mode`}
             </DropdownMenuItem>
+            {!isGuest ? (
+              <DropdownMenuItem
+                className="cursor-pointer text-[13px]"
+                data-testid="user-nav-item-platform-settings"
+                onSelect={() => router.push("/settings/platform")}
+              >
+                <SettingsIcon className="mr-2 size-3.5" />
+                Platform settings
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               className="cursor-pointer text-[13px]"
               data-testid="user-nav-item-mcp-settings"
@@ -95,6 +111,26 @@ export function SidebarUserNav({ user }: { user: User }) {
               <PlugIcon className="mr-2 size-3.5" />
               MCP servers
             </DropdownMenuItem>
+            {!isGuest ? (
+              <DropdownMenuItem
+                className="cursor-pointer text-[13px]"
+                data-testid="user-nav-item-skills-settings"
+                onSelect={() => router.push("/settings/skills")}
+              >
+                <SparklesIcon className="mr-2 size-3.5" />
+                Agent skills
+              </DropdownMenuItem>
+            ) : null}
+            {!isGuest ? (
+              <DropdownMenuItem
+                className="cursor-pointer text-[13px]"
+                data-testid="user-nav-item-secrets-settings"
+                onSelect={() => router.push("/settings/secrets")}
+              >
+                <KeyRound className="mr-2 size-3.5" />
+                Secrets
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuSeparator />
             <DropdownMenuItem asChild data-testid="user-nav-item-auth">
               <button

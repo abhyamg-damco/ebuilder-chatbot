@@ -13,13 +13,13 @@ Multiple browser tools may run in one chat turn (navigate → act → extract). 
 
 - Key: `chatId` (UUID of the conversation).
 - Value: `{ stagehand, sessionId, liveViewUrl }`.
-- Scope: **single API request** (one `streamText` invocation). Not shared across follow-up user messages on serverless.
+- Scope: **one API request** in memory; cloud session persists via Browserbase `keepAlive`.
 
 ### Lifecycle
 
 ```
 First live-browser tool call
-  → createStagehandInstance()
+  → createStagehandInstance({ keepAlive: true })
   → stagehand.init()
   → emit data-browserSession { status: "running" }
   → cache in activeSessions Map
@@ -27,13 +27,24 @@ First live-browser tool call
 Subsequent tool calls (same request)
   → activeSessions.get(chatId) — reuse
 
-closeBrowser tool OR streamText onFinish
-  → stagehand.close()
-  → activeSessions.delete(chatId)
-  → optionally emit { status: "ended" }
+streamText onFinish (agent turn complete)
+  → releaseBrowserSession(chatId) — disconnect Stagehand, cloud browser stays alive
+  → DB status remains "running" — user can still use live view
+
+Follow-up user message
+  → getOrCreateBrowserSession reconnects via browserbaseSessionID
+
+closeBrowser tool
+  → REQUEST_RELEASE on Browserbase API
+  → endBrowserSessionRecord + emit { status: "ended" }
+
+Idle timeout (user-configurable in Platform settings, default 2 minutes)
+  → releaseBrowserSession schedules after() callback
+  → client hook also calls POST /api/browserbase/close
+  → stale sessions are not reconnected on the next message
 ```
 
-`closeAllBrowserSessions()` in `onFinish` is a safety net if the agent forgets `closeBrowser`.
+`releaseBrowserSession` on `onFinish` keeps the browser available when the agent pauses for OTP or other chat input.
 
 ### Stagehand cache
 
@@ -48,14 +59,14 @@ closeBrowser tool OR streamText onFinish
 
 **Negative**
 
-- **No cross-message session persistence** on Vercel serverless (new request = new process). Follow-up messages start a fresh browser unless we add Redis/external session reconnection later.
+- Cloud sessions with `keepAlive` must be explicitly closed via `closeBrowser` to avoid ongoing Browserbase charges.
+- Reconnect depends on Browserbase session still being within its timeout window.
 
 ## Future options
 
-- Store `sessionId` in Redis keyed by `chatId` for reconnect via Browserbase CDP.
 - Use Browserbase Contexts for cookie/auth persistence across sessions.
 
 ## References
 
 - `lib/browserbase/session-store.ts`
-- `app/(chat)/api/chat/route.ts` → `onFinish` → `closeAllBrowserSessions`
+- `app/(chat)/api/chat/route.ts` → `onFinish` → `releaseBrowserSession`

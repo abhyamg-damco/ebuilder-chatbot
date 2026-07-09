@@ -1,4 +1,4 @@
-import { geolocation, ipAddress } from "@vercel/functions";
+import { geolocation } from "@vercel/functions";
 import {
   convertToModelMessages,
   createUIMessageStream,
@@ -7,19 +7,18 @@ import {
   stepCountIs,
   streamText,
 } from "ai";
-import { checkBotId } from "botid/server";
 import { after } from "next/server";
 import { createResumableStreamContext } from "resumable-stream";
-import { requireRegularSession, type UserType } from "@/app/(auth)/auth";
-import { entitlementsByUserType } from "@/lib/ai/entitlements";
+import { requireRegularSession } from "@/app/(auth)/auth";
 import {
   allowedModelIds,
   chatModels,
   DEFAULT_CHAT_MODEL,
   getCapabilities,
+  getOpenAIProviderOptions,
 } from "@/lib/ai/models";
 import { generateToolReasoningExplanation } from "@/lib/ai/generate-tool-reasoning";
-import { type RequestHints, hasBrowseIntent, hasUploadIntent, systemPrompt } from "@/lib/ai/prompts";
+import { type RequestHints, hasAutomationIntent, hasBrowseIntent, hasUploadIntent, systemPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocument } from "@/lib/ai/tools/create-document";
 import { editDocument } from "@/lib/ai/tools/edit-document";
@@ -31,7 +30,7 @@ import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
 import { updateDocument } from "@/lib/ai/tools/update-document";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import { isBrowserbaseEnabled } from "@/lib/browserbase/config";
-import { closeAllBrowserSessions } from "@/lib/browserbase/session-store";
+import { releaseBrowserSession } from "@/lib/browserbase/session-store";
 import { isProductionEnvironment } from "@/lib/constants";
 import {
   closeMcpClients,
@@ -49,7 +48,6 @@ import {
   deleteChatById,
   getChatById,
   getChatUploadsByChatId,
-  getMessageCountByUserId,
   getMessagesByChatId,
   linkUploadsToMessage,
   markUploadsUseInBrowser,
@@ -60,7 +58,15 @@ import {
 } from "@/lib/db/queries";
 import type { DBMessage } from "@/lib/db/schema";
 import { ChatbotError } from "@/lib/errors";
-import { checkIpRateLimit } from "@/lib/ratelimit";
+import {
+  parseSecretMentionsFromMessages,
+  resolveReferencedSecrets,
+} from "@/lib/secrets/resolve";
+import { TRIMBLE_SECRET_SLUG_LIST } from "@/lib/secrets/trimble";
+import {
+  parseSkillMentions,
+  resolveReferencedSkills,
+} from "@/lib/skills/resolve";
 import type { ChatMessage } from "@/lib/types";
 import { convertToUIMessages, generateUUID } from "@/lib/utils";
 import { generateTitleFromUserMessage } from "../../actions";
@@ -103,13 +109,18 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { id, message, messages, selectedChatModel, selectedVisibilityType } =
-      requestBody;
+    const {
+      id,
+      message,
+      messages,
+      selectedChatModel,
+      selectedVisibilityType,
+      referencedSkillIds,
+      referencedSecretIds,
+      sessionType: requestSessionType,
+    } = requestBody;
 
-    const [, session] = await Promise.all([
-      checkBotId().catch(() => null),
-      requireRegularSession(),
-    ]);
+    const session = await requireRegularSession();
 
     if (!session?.user) {
       return new ChatbotError("unauthorized:chat").toResponse();
@@ -119,37 +130,30 @@ export async function POST(request: Request) {
       ? selectedChatModel
       : DEFAULT_CHAT_MODEL;
 
-    await checkIpRateLimit(ipAddress(request));
-
-    const userType: UserType = session.user.type;
-
-    const messageCount = await getMessageCountByUserId({
-      id: session.user.id,
-      differenceInHours: 1,
-    });
-
-    if (messageCount > entitlementsByUserType[userType].maxMessagesPerHour) {
-      return new ChatbotError("rate_limit:chat").toResponse();
-    }
-
     const isToolApprovalFlow = Boolean(messages);
 
     const chat = await getChatById({ id });
     let messagesFromDb: DBMessage[] = [];
     let titlePromise: Promise<string> | null = null;
+    /** Effective session mode for this turn (request wins on create; DB thereafter). */
+    let effectiveSessionType =
+      requestSessionType ?? chat?.sessionType ?? null;
 
     if (chat) {
       if (chat.userId !== session.user.id) {
         return new ChatbotError("forbidden:chat").toResponse();
       }
       messagesFromDb = await getMessagesByChatId({ id });
+      effectiveSessionType = chat.sessionType ?? requestSessionType ?? null;
     } else if (message?.role === "user") {
       await saveChat({
         id,
         userId: session.user.id,
         title: "New chat",
         visibility: selectedVisibilityType,
+        sessionType: requestSessionType ?? "general",
       });
+      effectiveSessionType = requestSessionType ?? "general";
       titlePromise = generateTitleFromUserMessage({ message });
     }
 
@@ -296,6 +300,29 @@ export async function POST(request: Request) {
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
       execute: async ({ writer: dataStream }) => {
         const latestUserMessageText = getLatestUserMessageText(uiMessages);
+        const mentionedSlugs = parseSkillMentions(latestUserMessageText);
+        // Secrets must stay available on OTP / follow-up turns: scan full history,
+        // plus always load Trimble vault slugs for trimble_automation sessions.
+        const historySecretSlugs = parseSecretMentionsFromMessages(uiMessages);
+        const trimbleSlugs =
+          effectiveSessionType === "trimble_automation"
+            ? [...TRIMBLE_SECRET_SLUG_LIST]
+            : [];
+        const secretSlugs = [
+          ...new Set([...historySecretSlugs, ...trimbleSlugs]),
+        ];
+        const [activeSkills, activeSecrets] = await Promise.all([
+          resolveReferencedSkills({
+            userId: session.user.id,
+            slugs: mentionedSlugs,
+            skillIds: referencedSkillIds ?? [],
+          }),
+          resolveReferencedSecrets({
+            userId: session.user.id,
+            slugs: secretSlugs,
+            secretIds: referencedSecretIds ?? [],
+          }),
+        ]);
         const browserTools =
           browserToolNames.length > 0
             ? createBrowserTools({
@@ -303,6 +330,7 @@ export async function POST(request: Request) {
                 userId: session.user.id,
                 dataStream,
                 chatUploadRecords,
+                activeSecrets,
               })
             : null;
 
@@ -314,22 +342,25 @@ export async function POST(request: Request) {
             browserToolsEnabled: browserToolNames.length > 0,
             browseIntent: hasBrowseIntent(latestUserMessageText),
             uploadIntent: hasUploadIntent(latestUserMessageText),
+            automationIntent: hasAutomationIntent(latestUserMessageText),
             mcpInstructions: mcpBundle.instructions,
             chatUploads: uploadAccessList,
+            activeSkills,
+            activeSecrets,
+            sessionType: effectiveSessionType,
           }),
           messages: modelMessages,
           stopWhen: stepCountIs(
             browserToolNames.length > 0 || mcpBundle.toolNames.length > 0
-              ? 15
+              ? 30
               : 5
           ),
           experimental_activeTools:
             activeToolNames as (typeof builtInToolNames)[number][],
-          providerOptions: {
-            ...(modelConfig?.reasoningEffort && {
-              openai: { reasoningEffort: modelConfig.reasoningEffort },
-            }),
-          },
+          providerOptions:
+            getOpenAIProviderOptions(modelConfig, {
+              hasTools: activeToolNames.length > 0,
+            }) ?? {},
           tools: {
             getWeather,
             createDocument: createDocument({
@@ -396,8 +427,14 @@ export async function POST(request: Request) {
             );
           },
           onFinish: async () => {
-            // Safety net: close cloud browsers even if the agent skips closeBrowser.
-            await closeAllBrowserSessions();
+            // Disconnect Stagehand but keep the cloud browser alive when the agent
+            // pauses for user input (OTP, credentials, manual form steps).
+            if (browserToolNames.length > 0) {
+              await releaseBrowserSession({
+                chatId: id,
+                userId: session.user.id,
+              });
+            }
             await closeMcpClients(mcpBundle.clients);
           },
           experimental_telemetry: {

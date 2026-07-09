@@ -15,7 +15,13 @@ export const BROWSERBASE_MODEL = "google/gemini-2.5-flash";
  * Max steps for browserAgent tool calls.
  * Kept low to stay within the chat route's 60s serverless timeout.
  */
-export const BROWSER_AGENT_MAX_STEPS = 8;
+export const BROWSER_AGENT_MAX_STEPS = 30;
+
+/**
+ * Auto-close keepAlive browser sessions after this idle period (no agent activity).
+ * @deprecated Use per-user settings via {@link DEFAULT_BROWSER_IDLE_TIMEOUT_MS}.
+ */
+export { DEFAULT_BROWSER_IDLE_TIMEOUT_MS as BROWSER_IDLE_TIMEOUT_MS } from "@/lib/settings/defaults";
 
 /**
  * Reads BROWSERBASE_API_KEY from the environment.

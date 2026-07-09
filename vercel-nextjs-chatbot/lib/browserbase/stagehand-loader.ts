@@ -43,20 +43,41 @@ async function loadStagehandModule(): Promise<StagehandModule> {
   return stagehandModule;
 }
 
+/** Options when creating or reconnecting to a Browserbase-backed Stagehand instance. */
+export type CreateStagehandOptions = {
+  /** Reconnect to an existing Browserbase session (requires keepAlive on create). */
+  browserbaseSessionID?: string;
+};
+
 /**
  * Creates a new Stagehand instance configured for Browserbase cloud browsers.
  *
  * LLM calls route through Browserbase Model Gateway via BROWSERBASE_API_KEY —
  * no separate OpenAI/Anthropic key is required on the free tier.
  *
+ * `keepAlive: true` lets the cloud session survive `stagehand.close()` so the
+ * agent can pause for chat input (OTP, credentials) and reconnect on the next turn.
+ *
  * @returns An initialized-ready Stagehand instance (call `.init()` before use).
  */
-export async function createStagehandInstance(): Promise<StagehandInstance> {
+export async function createStagehandInstance(
+  options: CreateStagehandOptions = {}
+): Promise<StagehandInstance> {
   const { Stagehand: StagehandClient } = await loadStagehandModule();
 
   return new StagehandClient({
     env: "BROWSERBASE",
     model: BROWSERBASE_MODEL,
+    // Cloud session stays alive after disconnect — required for multi-turn flows.
+    keepAlive: true,
+    browserbaseSessionCreateParams: {
+      keepAlive: true,
+      // Default 1h — enough for OTP / manual steps between chat messages.
+      timeout: 3_600,
+    },
+    ...(options.browserbaseSessionID
+      ? { browserbaseSessionID: options.browserbaseSessionID }
+      : {}),
     // Persists observe→act cache across runs for faster repeat automations.
     cacheDir: getStagehandCacheDir(),
   });

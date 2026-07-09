@@ -38,9 +38,18 @@ import {
   vote,
   mcpServer,
   type McpServer,
+  agentSkill,
+  type AgentSkill,
+  userPlatformSettings,
+  type UserPlatformSettingsRow,
+  userSecret,
+  type UserSecret,
+  type ChatSessionType,
 } from "./schema";
 import { generateHashedPassword, normalizeAuthEmail } from "./utils";
 import type { McpServerScope } from "../mcp/scope";
+import type { AgentSkillScope } from "../skills/scope";
+import type { UserSecretScope } from "../secrets/scope";
 import { getDb } from "./client";
 
 let drizzleDb: ReturnType<typeof getDb> | undefined;
@@ -60,6 +69,14 @@ function mcpServerScopeWhere(scope: McpServerScope): SQL {
   }
 
   return eq(mcpServer.userId, scope.userId);
+}
+
+function agentSkillScopeWhere(scope: AgentSkillScope): SQL {
+  return eq(agentSkill.userId, scope.userId);
+}
+
+function userSecretScopeWhere(scope: UserSecretScope): SQL {
+  return eq(userSecret.userId, scope.userId);
 }
 
 export async function getUser(email: string): Promise<User[]> {
@@ -126,11 +143,13 @@ export async function saveChat({
   userId,
   title,
   visibility,
+  sessionType,
 }: {
   id: string;
   userId: string;
   title: string;
   visibility: VisibilityType;
+  sessionType?: ChatSessionType | null;
 }) {
   try {
     return await useDb().insert(chat).values({
@@ -139,6 +158,7 @@ export async function saveChat({
       userId,
       title,
       visibility,
+      ...(sessionType !== undefined && { sessionType }),
     });
   } catch (_error) {
     throw new ChatbotError("bad_request:database", "Failed to save chat");
@@ -807,6 +827,400 @@ export async function deleteMcpServer({
 }
 
 // ---------------------------------------------------------------------------
+// Agent skills (user-defined instructions)
+// ---------------------------------------------------------------------------
+
+/** Lists all skills for a signed-in user. */
+export async function getAgentSkills({ scope }: { scope: AgentSkillScope }) {
+  try {
+    return await useDb()
+      .select()
+      .from(agentSkill)
+      .where(agentSkillScopeWhere(scope))
+      .orderBy(desc(agentSkill.createdAt));
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get agent skills");
+  }
+}
+
+/** Returns a single skill by id when it belongs to the user. */
+export async function getAgentSkillById({
+  id,
+  scope,
+}: {
+  id: string;
+  scope: AgentSkillScope;
+}) {
+  try {
+    const [skill] = await useDb()
+      .select()
+      .from(agentSkill)
+      .where(and(eq(agentSkill.id, id), agentSkillScopeWhere(scope)))
+      .limit(1);
+
+    return skill ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get agent skill by id"
+    );
+  }
+}
+
+/** Loads enabled skills matching the given slugs for a user. */
+export async function getEnabledAgentSkillsBySlugs({
+  userId,
+  slugs,
+}: {
+  userId: string;
+  slugs: string[];
+}) {
+  if (slugs.length === 0) {
+    return [];
+  }
+
+  try {
+    return await useDb()
+      .select()
+      .from(agentSkill)
+      .where(
+        and(
+          eq(agentSkill.userId, userId),
+          eq(agentSkill.enabled, true),
+          inArray(agentSkill.slug, slugs)
+        )
+      );
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get agent skills by slug"
+    );
+  }
+}
+
+/** Loads skills by id for a user (enabled filter applied at resolve time). */
+export async function getAgentSkillsByIds({
+  userId,
+  ids,
+}: {
+  userId: string;
+  ids: string[];
+}) {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  try {
+    return await useDb()
+      .select()
+      .from(agentSkill)
+      .where(and(eq(agentSkill.userId, userId), inArray(agentSkill.id, ids)));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get agent skills by id"
+    );
+  }
+}
+
+/** Creates a new agent skill for the user. */
+export async function createAgentSkill({
+  scope,
+  data,
+}: {
+  scope: AgentSkillScope;
+  data: Omit<AgentSkill, "id" | "userId" | "createdAt" | "updatedAt">;
+}) {
+  try {
+    const [created] = await useDb()
+      .insert(agentSkill)
+      .values({
+        userId: scope.userId,
+        ...data,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    return created;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to create agent skill"
+    );
+  }
+}
+
+/** Updates an existing agent skill owned by the user. */
+export async function updateAgentSkill({
+  id,
+  scope,
+  data,
+}: {
+  id: string;
+  scope: AgentSkillScope;
+  data: Partial<
+    Omit<AgentSkill, "id" | "userId" | "createdAt" | "updatedAt">
+  >;
+}) {
+  try {
+    const [updated] = await useDb()
+      .update(agentSkill)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(agentSkill.id, id), agentSkillScopeWhere(scope)))
+      .returning();
+
+    return updated ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to update agent skill"
+    );
+  }
+}
+
+/** Deletes an agent skill owned by the user. */
+export async function deleteAgentSkill({
+  id,
+  scope,
+}: {
+  id: string;
+  scope: AgentSkillScope;
+}) {
+  try {
+    const [deleted] = await useDb()
+      .delete(agentSkill)
+      .where(and(eq(agentSkill.id, id), agentSkillScopeWhere(scope)))
+      .returning();
+
+    return deleted ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to delete agent skill"
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User secrets (vault)
+// ---------------------------------------------------------------------------
+
+/** Lists all vault secrets for a signed-in user. */
+export async function getUserSecrets({ scope }: { scope: UserSecretScope }) {
+  try {
+    return await useDb()
+      .select()
+      .from(userSecret)
+      .where(userSecretScopeWhere(scope))
+      .orderBy(desc(userSecret.createdAt));
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get user secrets");
+  }
+}
+
+/** Returns a single secret by id when it belongs to the user. */
+export async function getUserSecretById({
+  id,
+  scope,
+}: {
+  id: string;
+  scope: UserSecretScope;
+}) {
+  try {
+    const [secret] = await useDb()
+      .select()
+      .from(userSecret)
+      .where(and(eq(userSecret.id, id), userSecretScopeWhere(scope)))
+      .limit(1);
+
+    return secret ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get user secret by id"
+    );
+  }
+}
+
+/** Loads secrets matching the given slugs for a user. */
+export async function getUserSecretsBySlugs({
+  userId,
+  slugs,
+}: {
+  userId: string;
+  slugs: string[];
+}) {
+  if (slugs.length === 0) {
+    return [];
+  }
+
+  try {
+    return await useDb()
+      .select()
+      .from(userSecret)
+      .where(
+        and(eq(userSecret.userId, userId), inArray(userSecret.slug, slugs))
+      );
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get user secrets by slug"
+    );
+  }
+}
+
+/** Loads secrets by id for a user. */
+export async function getUserSecretsByIds({
+  userId,
+  ids,
+}: {
+  userId: string;
+  ids: string[];
+}) {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  try {
+    return await useDb()
+      .select()
+      .from(userSecret)
+      .where(and(eq(userSecret.userId, userId), inArray(userSecret.id, ids)));
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get user secrets by id"
+    );
+  }
+}
+
+/** Creates a new vault secret for the user. */
+export async function createUserSecret({
+  scope,
+  data,
+}: {
+  scope: UserSecretScope;
+  data: Omit<UserSecret, "id" | "userId" | "createdAt" | "updatedAt">;
+}) {
+  try {
+    const [created] = await useDb()
+      .insert(userSecret)
+      .values({
+        userId: scope.userId,
+        ...data,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    return created;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to create user secret"
+    );
+  }
+}
+
+/**
+ * Creates or updates a secret by slug for the user.
+ * Used by Trimble setup to persist site credentials without duplicates.
+ */
+export async function upsertUserSecretBySlug({
+  scope,
+  data,
+}: {
+  scope: UserSecretScope;
+  data: Omit<UserSecret, "id" | "userId" | "createdAt" | "updatedAt">;
+}) {
+  try {
+    const [existing] = await useDb()
+      .select()
+      .from(userSecret)
+      .where(
+        and(eq(userSecret.userId, scope.userId), eq(userSecret.slug, data.slug))
+      )
+      .limit(1);
+
+    if (existing) {
+      const [updated] = await useDb()
+        .update(userSecret)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(userSecret.id, existing.id))
+        .returning();
+
+      return updated;
+    }
+
+    const [created] = await useDb()
+      .insert(userSecret)
+      .values({
+        userId: scope.userId,
+        ...data,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    return created;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to upsert user secret"
+    );
+  }
+}
+
+/** Updates an existing vault secret owned by the user. */
+export async function updateUserSecret({
+  id,
+  scope,
+  data,
+}: {
+  id: string;
+  scope: UserSecretScope;
+  data: Partial<
+    Omit<UserSecret, "id" | "userId" | "createdAt" | "updatedAt">
+  >;
+}) {
+  try {
+    const [updated] = await useDb()
+      .update(userSecret)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(userSecret.id, id), userSecretScopeWhere(scope)))
+      .returning();
+
+    return updated ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to update user secret"
+    );
+  }
+}
+
+/** Deletes a vault secret owned by the user. */
+export async function deleteUserSecret({
+  id,
+  scope,
+}: {
+  id: string;
+  scope: UserSecretScope;
+}) {
+  try {
+    const [deleted] = await useDb()
+      .delete(userSecret)
+      .where(and(eq(userSecret.id, id), userSecretScopeWhere(scope)))
+      .returning();
+
+    return deleted ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to delete user secret"
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Chat uploads (GCS metadata)
 // ---------------------------------------------------------------------------
 
@@ -1272,6 +1686,74 @@ export async function getBrowserSessionByBrowserbaseId({
     throw new ChatbotError(
       "bad_request:database",
       "Failed to get browser session"
+    );
+  }
+}
+
+// User platform settings
+
+/** Returns persisted platform settings for a user, if any. */
+export async function getUserSettingsByUserId({
+  userId,
+}: {
+  userId: string;
+}): Promise<UserPlatformSettingsRow | null> {
+  try {
+    const [row] = await useDb()
+      .select()
+      .from(userPlatformSettings)
+      .where(eq(userPlatformSettings.userId, userId))
+      .limit(1);
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get user platform settings"
+    );
+  }
+}
+
+/** Creates or updates platform settings for a user. */
+export async function upsertUserSettings({
+  userId,
+  browserIdleTimeoutSeconds,
+}: {
+  userId: string;
+  browserIdleTimeoutSeconds: number;
+}): Promise<UserPlatformSettingsRow> {
+  try {
+    const [row] = await useDb()
+      .insert(userPlatformSettings)
+      .values({
+        userId,
+        browserIdleTimeoutSeconds,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: userPlatformSettings.userId,
+        set: {
+          browserIdleTimeoutSeconds,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
+
+    if (!row) {
+      throw new ChatbotError(
+        "bad_request:database",
+        "Failed to save user platform settings"
+      );
+    }
+
+    return row;
+  } catch (error) {
+    if (error instanceof ChatbotError) {
+      throw error;
+    }
+
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to save user platform settings"
     );
   }
 }

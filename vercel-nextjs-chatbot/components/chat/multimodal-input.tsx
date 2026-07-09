@@ -11,6 +11,7 @@ import {
   WrenchIcon,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useSession } from "next-auth/react";
 import { useTheme } from "next-themes";
 import {
   type ChangeEvent,
@@ -44,8 +45,11 @@ import {
 } from "@/lib/ai/models";
 import type { Attachment, ChatMessage } from "@/lib/types";
 import { FILE_ACCEPT } from "@/lib/storage/mime";
-import { cn } from "@/lib/utils";
+import type { AgentSkillPublic } from "@/lib/skills/types";
+import { cn, fetcher } from "@/lib/utils";
 import { useBrowserbaseEnabled } from "@/hooks/use-browserbase-enabled";
+import { useActiveChat } from "@/hooks/use-active-chat";
+import { guestRegex } from "@/lib/constants";
 import {
   PromptInput,
   PromptInputFooter,
@@ -56,6 +60,13 @@ import {
 import { Button } from "../ui/button";
 import { PaperclipIcon, StopIcon } from "./icons";
 import { PreviewAttachment } from "./preview-attachment";
+import {
+  filterSkillsByQuery,
+  getSkillMentionState,
+  SelectedSkillChips,
+  SkillMentionMenu,
+  type SkillMentionOption,
+} from "./skill-mentions";
 import {
   type SlashCommand,
   SlashCommandMenu,
@@ -110,7 +121,20 @@ function PureMultimodalInput({
   isLoading?: boolean;
 }) {
   const router = useRouter();
+  const { data: session } = useSession();
+  const { setReferencedSkillIds } = useActiveChat();
   const { setTheme, resolvedTheme } = useTheme();
+  const isGuest = guestRegex.test(session?.user?.email ?? "");
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+
+  const { data: skillsData } = useSWR<{ skills: AgentSkillPublic[] }>(
+    isGuest ? null : `${basePath}/api/skills`,
+    fetcher
+  );
+
+  const enabledSkills = (skillsData?.skills ?? []).filter(
+    (skill) => skill.enabled
+  );
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { width } = useWindowSize();
   const hasAutoFocused = useRef(false);
@@ -149,9 +173,36 @@ function PureMultimodalInput({
       setSlashOpen(true);
       setSlashQuery(val.slice(1));
       setSlashIndex(0);
+      setSkillOpen(false);
     } else {
       setSlashOpen(false);
+      const mentionState = getSkillMentionState(val);
+      if (mentionState && !isGuest) {
+        setSkillOpen(true);
+        setSkillQuery(mentionState.query);
+        setSkillIndex(0);
+      } else {
+        setSkillOpen(false);
+      }
     }
+  };
+
+  const handleSkillSelect = (skill: SkillMentionOption) => {
+    const mentionState = getSkillMentionState(input);
+    const nextInput = mentionState
+      ? `${input.slice(0, mentionState.mentionStart)}@${skill.slug} `
+      : `${input}@${skill.slug} `;
+
+    setInput(nextInput);
+    setSkillOpen(false);
+    setSelectedSkills((current) => {
+      if (current.some((item) => item.id === skill.id)) {
+        return current;
+      }
+
+      return [...current, skill];
+    });
+    textareaRef.current?.focus();
   };
 
   const handleSlashSelect = (cmd: SlashCommand) => {
@@ -159,7 +210,7 @@ function PureMultimodalInput({
     setInput("");
     switch (cmd.action) {
       case "new":
-        router.push("/");
+        router.push("/?selectSession=1");
         break;
       case "clear":
         setMessages(() => []);
@@ -216,6 +267,12 @@ function PureMultimodalInput({
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
+  const [skillOpen, setSkillOpen] = useState(false);
+  const [skillQuery, setSkillQuery] = useState("");
+  const [skillIndex, setSkillIndex] = useState(0);
+  const [selectedSkills, setSelectedSkills] = useState<SkillMentionOption[]>(
+    []
+  );
   const browserbaseEnabled = useBrowserbaseEnabled();
 
   const submitForm = useCallback(() => {
@@ -224,6 +281,8 @@ function PureMultimodalInput({
       "",
       `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
     );
+
+    setReferencedSkillIds(selectedSkills.map((skill) => skill.id));
 
     sendMessage({
       role: "user",
@@ -250,6 +309,8 @@ function PureMultimodalInput({
     setAttachments([]);
     setLocalStorageInput("");
     setInput("");
+    setSelectedSkills([]);
+    setReferencedSkillIds([]);
 
     if (width && width > 768) {
       textareaRef.current?.focus();
@@ -259,6 +320,8 @@ function PureMultimodalInput({
     setInput,
     attachments,
     sendMessage,
+    setReferencedSkillIds,
+    selectedSkills,
     setAttachments,
     setLocalStorageInput,
     width,
@@ -444,6 +507,15 @@ function PureMultimodalInput({
             selectedIndex={slashIndex}
           />
         )}
+        {skillOpen && (
+          <SkillMentionMenu
+            onClose={() => setSkillOpen(false)}
+            onSelect={handleSkillSelect}
+            query={skillQuery}
+            selectedIndex={skillIndex}
+            skills={enabledSkills}
+          />
+        )}
       </div>
 
       <PromptInput
@@ -467,6 +539,14 @@ function PureMultimodalInput({
           }
         }}
       >
+        <SelectedSkillChips
+          onRemove={(skillId) => {
+            setSelectedSkills((current) =>
+              current.filter((skill) => skill.id !== skillId)
+            );
+          }}
+          skills={selectedSkills}
+        />
         {(attachments.length > 0 || uploadQueue.length > 0) && (
           <div
             className="flex w-full self-start flex-row gap-2 overflow-x-auto px-3 pt-3 no-scrollbar"
@@ -540,6 +620,31 @@ function PureMultimodalInput({
               if (e.key === "Escape") {
                 e.preventDefault();
                 setSlashOpen(false);
+                return;
+              }
+            }
+            if (skillOpen) {
+              const filtered = filterSkillsByQuery(enabledSkills, skillQuery);
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setSkillIndex((index) => Math.min(index + 1, filtered.length - 1));
+                return;
+              }
+              if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setSkillIndex((index) => Math.max(index - 1, 0));
+                return;
+              }
+              if (e.key === "Enter" || e.key === "Tab") {
+                e.preventDefault();
+                if (filtered[skillIndex]) {
+                  handleSkillSelect(filtered[skillIndex]);
+                }
+                return;
+              }
+              if (e.key === "Escape") {
+                e.preventDefault();
+                setSkillOpen(false);
                 return;
               }
             }

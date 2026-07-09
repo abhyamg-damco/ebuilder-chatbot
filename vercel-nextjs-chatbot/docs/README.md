@@ -5,6 +5,7 @@
 | Document | Description |
 |----------|-------------|
 | [browserbase-integration.md](./architecture/browserbase-integration.md) | End-to-end Browserbase integration overview |
+| [agent-skills.md](./features/agent-skills.md) | Custom @mention skills in settings and chat |
 
 ## Decisions (ADRs)
 

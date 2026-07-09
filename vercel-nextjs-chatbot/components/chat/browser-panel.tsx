@@ -38,6 +38,34 @@ export function BrowserPanel({ chatId }: { chatId: string }) {
   const [iframeUrl, setIframeUrl] = useState<string | null>(liveViewUrl);
   const [disconnected, setDisconnected] = useState(false);
 
+  /**
+   * Fetches a fresh embed URL — used on initial load and after transient disconnects
+   * while the cloud session is still alive (agent paused for OTP / user input).
+   */
+  const refreshLiveView = useCallback(async () => {
+    if (!sessionId) {
+      return false;
+    }
+
+    const response = await fetch(
+      `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/browserbase/live-view?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(chatId)}`
+    );
+
+    if (!response.ok) {
+      return false;
+    }
+
+    const data = (await response.json()) as { debuggerFullscreenUrl?: string };
+
+    if (data.debuggerFullscreenUrl) {
+      setIframeUrl(data.debuggerFullscreenUrl);
+      setDisconnected(false);
+      return true;
+    }
+
+    return false;
+  }, [sessionId, chatId]);
+
   useEffect(() => {
     setIframeUrl(liveViewUrl);
     setDisconnected(false);
@@ -55,19 +83,10 @@ export function BrowserPanel({ chatId }: { chatId: string }) {
     let cancelled = false;
 
     const poll = async () => {
-      const response = await fetch(
-        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/browserbase/live-view?sessionId=${encodeURIComponent(sessionId)}&chatId=${encodeURIComponent(chatId)}`
-      );
-
-      if (!response.ok || cancelled) {
+      if (cancelled) {
         return;
       }
-
-      const data = (await response.json()) as { debuggerFullscreenUrl?: string };
-
-      if (data.debuggerFullscreenUrl && !cancelled) {
-        setIframeUrl(data.debuggerFullscreenUrl);
-      }
+      await refreshLiveView();
     };
 
     const interval = setInterval(() => {
@@ -80,19 +99,31 @@ export function BrowserPanel({ chatId }: { chatId: string }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [sessionId, liveViewUrl, status, chatId]);
+  }, [sessionId, liveViewUrl, status, refreshLiveView]);
 
-  /** Browserbase iframe posts this when the cloud session ends. */
+  /** Browserbase iframe posts this when the debugger disconnects. */
   useEffect(() => {
     const onMessage = (event: MessageEvent) => {
-      if (event.data === "browserbase-disconnected") {
-        setDisconnected(true);
+      if (event.data !== "browserbase-disconnected") {
+        return;
+      }
+
+      setDisconnected(true);
+
+      // Agent may have paused for chat input — session stays alive with keepAlive.
+      if (status === "running" && sessionId) {
+        const retryDelays = [500, 1_500, 3_000];
+        for (const delay of retryDelays) {
+          setTimeout(() => {
+            void refreshLiveView();
+          }, delay);
+        }
       }
     };
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, []);
+  }, [status, sessionId, refreshLiveView]);
 
   const handleClose = useCallback(() => {
     setBrowserPanel((current) => ({
@@ -125,7 +156,9 @@ export function BrowserPanel({ chatId }: { chatId: string }) {
             <p className="text-muted-foreground text-xs">
               {status === "running" && !disconnected
                 ? "Live — agent is browsing"
-                : "Session ended"}
+                : status === "running" && disconnected
+                  ? "Paused — enter details in chat or use the browser"
+                  : "Session ended"}
             </p>
           </div>
         </div>
@@ -163,10 +196,24 @@ export function BrowserPanel({ chatId }: { chatId: string }) {
           >
             <Monitor className="size-8 opacity-50" />
             <p className="text-sm">
-              {disconnected || status === "ended"
+              {status === "ended"
                 ? "Browser session ended."
-                : "Starting cloud browser…"}
+                : disconnected
+                  ? "Reconnecting to browser…"
+                  : "Starting cloud browser…"}
             </p>
+            {status === "running" && disconnected ? (
+              <Button
+                onClick={() => {
+                  void refreshLiveView();
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Reconnect live view
+              </Button>
+            ) : null}
             {replayUrl ? (
               <Button asChild size="sm" type="button" variant="outline">
                 <a href={replayUrl} rel="noopener noreferrer" target="_blank">

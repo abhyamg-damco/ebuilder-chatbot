@@ -34,6 +34,9 @@ export const user = pgTable(
 
 export type User = InferSelectModel<typeof user>;
 
+/** Chat session mode: general e-Builder chat vs Trimble browser automation. */
+export type ChatSessionType = "general" | "trimble_automation";
+
 export const chat = pgTable("Chat", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
   createdAt: timestamp("createdAt").notNull(),
@@ -44,6 +47,9 @@ export const chat = pgTable("Chat", {
   visibility: varchar("visibility", { enum: ["public", "private"] })
     .notNull()
     .default("private"),
+  sessionType: varchar("sessionType", {
+    enum: ["general", "trimble_automation"],
+  }),
 });
 
 export type Chat = InferSelectModel<typeof chat>;
@@ -166,6 +172,71 @@ export const mcpServer = pgTable("McpServer", {
 
 export type McpServer = InferSelectModel<typeof mcpServer>;
 
+/**
+ * User-defined agent skill (markdown instructions referenced via @slug in chat).
+ * Scoped per signed-in user; injected into the system prompt when mentioned.
+ */
+export const agentSkill = pgTable(
+  "AgentSkill",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    name: varchar("name", { length: 128 }).notNull(),
+    slug: varchar("slug", { length: 64 }).notNull(),
+    description: text("description"),
+    content: text("content").notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    userSlugUnique: uniqueIndex("AgentSkill_userId_slug_unique").on(
+      table.userId,
+      table.slug
+    ),
+    userIdx: index("AgentSkill_userId_idx").on(table.userId),
+  })
+);
+
+export type AgentSkill = InferSelectModel<typeof agentSkill>;
+
+/**
+ * Per-user secret vault entry (URL, username, password, API key, etc.).
+ * Values are stored as plaintext for now; encryption can be added later
+ * without changing the public reference-by-slug API.
+ */
+export const userSecret = pgTable(
+  "UserSecret",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    name: varchar("name", { length: 128 }).notNull(),
+    slug: varchar("slug", { length: 64 }).notNull(),
+    kind: varchar("kind", {
+      enum: ["password", "username", "url", "api_key", "other"],
+    })
+      .notNull()
+      .default("other"),
+    value: text("value").notNull(),
+    description: text("description"),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    userSlugUnique: uniqueIndex("UserSecret_userId_slug_unique").on(
+      table.userId,
+      table.slug
+    ),
+    userIdx: index("UserSecret_userId_idx").on(table.userId),
+  })
+);
+
+export type UserSecret = InferSelectModel<typeof userSecret>;
+
 /** Upload metadata stored alongside GCS objects. */
 export type ChatUploadMetadata = {
   extractedTextPreview?: string;
@@ -281,3 +352,19 @@ export const chatBrowserSession = pgTable(
 );
 
 export type ChatBrowserSession = InferSelectModel<typeof chatBrowserSession>;
+
+/** Per-user platform preferences (browser timeouts, etc.). */
+export const userPlatformSettings = pgTable("UserPlatformSettings", {
+  userId: uuid("userId")
+    .primaryKey()
+    .notNull()
+    .references(() => user.id),
+  browserIdleTimeoutSeconds: integer("browserIdleTimeoutSeconds")
+    .notNull()
+    .default(120),
+  updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+});
+
+export type UserPlatformSettingsRow = InferSelectModel<
+  typeof userPlatformSettings
+>;

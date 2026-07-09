@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
+import { useActiveChat } from "@/hooks/use-active-chat";
 import { initialArtifactData, useArtifact } from "@/hooks/use-artifact";
 import { useBrowserPanel } from "@/hooks/use-browser-panel";
 import { artifactDefinitions } from "./artifact";
@@ -12,9 +13,12 @@ import { getChatHistoryPaginationKey } from "./sidebar-history";
 export function DataStreamHandler() {
   const { dataStream, setDataStream } = useDataStream();
   const { mutate } = useSWRConfig();
+  const { chatId } = useActiveChat();
 
   const { artifact, setArtifact, setMetadata } = useArtifact();
   const { setBrowserPanel } = useBrowserPanel();
+
+  const metadataKey = `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/api/chat/${chatId}/metadata`;
 
   useEffect(() => {
     if (!dataStream?.length) {
@@ -42,6 +46,7 @@ export function DataStreamHandler() {
           status: status === "ended" ? "ended" : "running",
           isVisible: status === "running" ? true : current.isVisible,
         }));
+        void mutate(metadataKey);
         continue;
       }
       const artifactDefinition = artifactDefinitions.find(
@@ -102,7 +107,7 @@ export function DataStreamHandler() {
         }
       });
     }
-  }, [dataStream, setArtifact, setMetadata, artifact, setDataStream, mutate, setBrowserPanel]);
+  }, [dataStream, setArtifact, setMetadata, artifact, setDataStream, mutate, setBrowserPanel, metadataKey]);
 
   return null;
 }

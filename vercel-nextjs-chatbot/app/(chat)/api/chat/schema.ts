@@ -52,6 +52,9 @@ export const postRequestBodySchema = z.object({
   messages: z.array(toolApprovalMessageSchema).optional(),
   selectedChatModel: z.string(),
   selectedVisibilityType: z.enum(["public", "private"]),
+  referencedSkillIds: z.array(z.string().uuid()).max(5).optional(),
+  referencedSecretIds: z.array(z.string().uuid()).max(10).optional(),
+  sessionType: z.enum(["general", "trimble_automation"]).optional(),
 });
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;

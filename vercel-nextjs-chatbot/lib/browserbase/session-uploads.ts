@@ -116,13 +116,17 @@ export async function syncUploadsToSession({
 
   const pending = browserBound
     .map((upload) => {
-      const alreadyInSession = session.syncedFiles.get(upload.id);
-      if (
-        alreadyInSession &&
-        upload.metadata?.browserSyncedSessionId === session.sessionId
-      ) {
-        result.skipped.push({ uploadId: upload.id, reason: "already synced" });
-        return null;
+      if (upload.metadata?.browserSyncedSessionId === session.sessionId) {
+        const remotePath = upload.metadata.browserRemotePath;
+        if (remotePath) {
+          session.syncedFiles.set(upload.id, {
+            uploadId: upload.id,
+            remotePath,
+            filename: sanitizeFilename(upload.originalFilename),
+          });
+          result.skipped.push({ uploadId: upload.id, reason: "already synced" });
+          return null;
+        }
       }
 
       return { upload, filename: buildRemoteFilename(upload, usedNames) };

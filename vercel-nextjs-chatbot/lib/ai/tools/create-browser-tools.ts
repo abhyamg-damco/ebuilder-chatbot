@@ -29,6 +29,11 @@ import {
   getOrCreateBrowserSession,
 } from "@/lib/browserbase/session-store";
 import type { ChatUpload } from "@/lib/db/schema";
+import {
+  expandSecretsInText,
+  redactSecretsInText,
+} from "@/lib/secrets/expand";
+import type { ActiveUserSecret } from "@/lib/secrets/types";
 import type { ChatMessage } from "@/lib/types";
 
 /** Dependencies injected from the chat API route's stream execute callback. */
@@ -37,11 +42,41 @@ type CreateBrowserToolsProps = {
   userId: string;
   dataStream: UIMessageStreamWriter<ChatMessage>;
   chatUploadRecords: ChatUpload[];
+  /** Resolved vault secrets for this turn — expanded into tool instructions. */
+  activeSecrets?: ActiveUserSecret[];
 };
 
 /** Public replay URL shown in tool results and the panel header link. */
 const sessionReplayUrl = (sessionId: string) =>
   `https://www.browserbase.com/sessions/${sessionId}`;
+
+/** Reads current page URL and title so the agent can chain actions without asking the user. */
+async function getPageState(stagehand: {
+  context: { pages: () => Array<{ url: () => string; title: () => Promise<string> }> };
+}) {
+  const page = stagehand.context.pages()[0];
+
+  if (!page) {
+    return { pageUrl: undefined, pageTitle: undefined };
+  }
+
+  return {
+    pageUrl: page.url(),
+    pageTitle: await page.title(),
+  };
+}
+
+const BROWSER_AGENT_SYSTEM_PROMPT = `You are an autonomous web automation agent. Complete the user's task on the current page without asking for confirmation at each step.
+
+Rules:
+- The instruction contains REAL credential values when provided — type those exact strings into form fields. Never type placeholder names like "trimble-username" or "@secret:…".
+- Use credentials, account names, and values from the instruction — do not re-prompt for them.
+- After each action, observe the page and continue to the next step automatically.
+- For login flows: enter username → click Next/Continue → enter password → submit → handle MFA only if a code was provided.
+- For wizards: click Next/Continue through each step until finished.
+- For dropdowns: select the matching option, then confirm/continue.
+- Only stop when the task is complete or you hit an unsolvable blocker (CAPTCHA, missing OTP).
+- Be precise with forms, navigation, and file uploads.`;
 
 /**
  * Builds the live-browser tool set for one chat stream invocation.
@@ -56,7 +91,16 @@ export function createBrowserTools({
   userId,
   dataStream,
   chatUploadRecords,
+  activeSecrets = [],
 }: CreateBrowserToolsProps) {
+  /** Expand @secret:slug / bare vault slugs before Stagehand sees the text. */
+  const withSecrets = (text: string) =>
+    expandSecretsInText(text, activeSecrets);
+
+  /** Keep real values out of tool results shown in chat. */
+  const forTranscript = (text: string) =>
+    redactSecretsInText(text, activeSecrets);
+
   const browserNavigate = tool({
     description:
       "Open or navigate the live cloud browser to a URL. Starts a browser session if one is not already active. The user can watch the live view on the right.",
@@ -64,13 +108,14 @@ export function createBrowserTools({
       url: z.string().url().describe("URL to open in the cloud browser"),
     }),
     execute: async ({ url }) => {
+      const resolvedUrl = withSecrets(url);
       const { stagehand, sessionId, liveViewUrl } =
         await getOrCreateBrowserSession({
           chatId,
           userId,
           dataStream,
-          title: new URL(url).hostname,
-          startedUrl: url,
+          title: new URL(resolvedUrl).hostname,
+          startedUrl: resolvedUrl,
         });
 
       const page = stagehand.context.pages()[0];
@@ -79,10 +124,10 @@ export function createBrowserTools({
         throw new Error("No browser page available.");
       }
 
-      await page.goto(url, { waitUntil: "domcontentloaded" });
+      await page.goto(resolvedUrl, { waitUntil: "domcontentloaded" });
 
       return {
-        url,
+        url: resolvedUrl,
         sessionId,
         sessionUrl: sessionReplayUrl(sessionId),
         liveViewUrl,
@@ -93,47 +138,53 @@ export function createBrowserTools({
 
   const browserAct = tool({
     description:
-      "Perform a single browser action in natural language on the current page — click a button, fill a field, scroll, select a menu item, etc. Requires an active browser session (use browserNavigate first).",
+      "Perform a single browser action in natural language on the current page — click a button, fill a field, scroll, select a menu item, etc. Returns pageUrl and pageTitle after the action so you can decide the next step without asking the user. Requires an active browser session (use browserNavigate first). Put REAL credential values in the instruction, never secret slug names.",
     inputSchema: z.object({
       instruction: z
         .string()
         .describe(
-          "Atomic action, e.g. 'click the Sign in button' or 'type john@example.com into the email field'"
+          "Atomic action with real values, e.g. 'click the Sign in button' or 'type john@example.com into the email field'"
         ),
     }),
     execute: async ({ instruction }) => {
+      const resolvedInstruction = withSecrets(instruction);
       const { stagehand, sessionId, liveViewUrl } =
         await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
       // observe→act pattern: discover the element once, then replay without full LLM act().
-      const observed = await stagehand.observe(instruction);
+      const observed = await stagehand.observe(resolvedInstruction);
       const action = observed[0];
 
       if (!action) {
+        const pageState = await getPageState(stagehand);
+
         return {
           success: false,
-          message: `No matching element found for: ${instruction}`,
+          message: `No matching element found for: ${forTranscript(resolvedInstruction)}`,
           sessionId,
           sessionUrl: sessionReplayUrl(sessionId),
           liveViewUrl,
+          ...pageState,
         };
       }
 
       await stagehand.act(action);
+      const pageState = await getPageState(stagehand);
 
       return {
         success: true,
-        instruction,
+        instruction: forTranscript(resolvedInstruction),
         sessionId,
         sessionUrl: sessionReplayUrl(sessionId),
         liveViewUrl,
+        ...pageState,
       };
     },
   });
 
   const browserExtract = tool({
     description:
-      "Extract structured text data from the current browser page. Requires an active browser session.",
+      "Extract structured text data from the current browser page. Use this to inspect wizard steps, visible form fields, error messages, and available buttons — then decide the next browserAct without asking the user. Requires an active browser session.",
     inputSchema: z.object({
       instruction: z
         .string()
@@ -142,18 +193,19 @@ export function createBrowserTools({
         ),
     }),
     execute: async ({ instruction }) => {
+      const resolvedInstruction = withSecrets(instruction);
       const { stagehand, sessionId, liveViewUrl } =
         await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
       const extracted = await stagehand.extract(
-        instruction,
+        resolvedInstruction,
         z.object({
           data: z.string().describe("Extracted content as readable text or JSON"),
         })
       );
 
       return {
-        instruction,
+        instruction: forTranscript(resolvedInstruction),
         extracted,
         sessionId,
         sessionUrl: sessionReplayUrl(sessionId),
@@ -164,11 +216,13 @@ export function createBrowserTools({
 
   const browserAgent = tool({
     description:
-      "Run a multi-step browser agent on the current page for complex tasks — forms, uploads, multi-page flows. Keeps the session open so the user can watch live. Use browserNavigate first to set the starting URL.",
+      "Run a multi-step browser agent on the current page for complex tasks — login flows, forms, uploads, multi-page wizards. Executes many steps autonomously without asking the user to confirm each one. Use browserNavigate first to set the starting URL. Include REAL username/password/URL values in the instruction (never vault slug names).",
     inputSchema: z.object({
       instruction: z
         .string()
-        .describe("Multi-step task for the browser agent"),
+        .describe(
+          "Complete multi-step task with all known REAL values (credentials, account names, project IDs, file paths). Never use placeholder slug names. The agent runs autonomously until done or blocked."
+        ),
       maxSteps: z
         .number()
         .min(1)
@@ -177,22 +231,27 @@ export function createBrowserTools({
         .describe(`Maximum agent steps (default ${BROWSER_AGENT_MAX_STEPS})`),
     }),
     execute: async ({ instruction, maxSteps = BROWSER_AGENT_MAX_STEPS }) => {
+      const resolvedInstruction = withSecrets(instruction);
       const { stagehand, sessionId, liveViewUrl } =
         await getOrCreateBrowserSession({ chatId, userId, dataStream });
 
       const agent = stagehand.agent({
-        systemPrompt:
-          "You are a web automation assistant. Complete the user's task on the current page. Be precise with forms, navigation, and file uploads.",
+        systemPrompt: BROWSER_AGENT_SYSTEM_PROMPT,
       });
 
-      const result = await agent.execute({ instruction, maxSteps });
+      const result = await agent.execute({
+        instruction: resolvedInstruction,
+        maxSteps,
+      });
+      const pageState = await getPageState(stagehand);
 
       return {
-        instruction,
+        instruction: forTranscript(resolvedInstruction),
         result,
         sessionId,
         sessionUrl: sessionReplayUrl(sessionId),
         liveViewUrl,
+        ...pageState,
       };
     },
   });

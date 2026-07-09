@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { useSession } from "next-auth/react";
 import { useActiveChat } from "@/hooks/use-active-chat";
 import { useChatMetadata } from "@/hooks/use-chat-metadata";
 import {
@@ -18,13 +19,17 @@ import {
   useBrowserPanel,
   useBrowserPanelSelector,
 } from "@/hooks/use-browser-panel";
+import { useBrowserIdleClose } from "@/hooks/use-browser-idle-close";
+import { useBrowserbaseEnabled } from "@/hooks/use-browserbase-enabled";
+import { useOpenBrowserPanel } from "@/hooks/use-open-browser-panel";
 import {
   initialArtifactData,
   useArtifact,
   useArtifactSelector,
 } from "@/hooks/use-artifact";
 import type { Attachment, ChatMessage } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { guestRegex } from "@/lib/constants";
+import { cn, generateUUID } from "@/lib/utils";
 import { Artifact } from "./artifact";
 import { BrowserPanel } from "./browser-panel";
 import { ChatHeader } from "./chat-header";
@@ -32,6 +37,11 @@ import { DataStreamHandler } from "./data-stream-handler";
 import { submitEditedMessage } from "./message-editor";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
+import { SessionTypePicker } from "./session-type-picker";
+import {
+  buildTrimbleKickoffText,
+  TrimbleSetupForm,
+} from "./trimble-setup-form";
 
 export function ChatShell() {
   const {
@@ -53,6 +63,13 @@ export function ChatShell() {
     setCurrentModelId,
     showCreditCardAlert,
     setShowCreditCardAlert,
+    setReferencedSkillIds,
+    setReferencedSecretIds,
+    sessionType,
+    setSessionType,
+    trimbleSetupComplete,
+    setTrimbleSetupComplete,
+    showSessionPicker,
   } = useActiveChat();
 
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(
@@ -83,27 +100,47 @@ export function ChatShell() {
     }
   }, [chatId, setArtifact, setBrowserPanel]);
 
-  /** Restore browser panel replay state from persisted session metadata on load. */
+  const browserPanelSessionId = useBrowserPanelSelector((state) => state.sessionId);
+  const browserPanelStatus = useBrowserPanelSelector((state) => state.status);
+  const { openBrowserPanel, hasActiveBrowser: hasPersistedBrowser } =
+    useOpenBrowserPanel(chatId);
+  const hasActiveBrowser =
+    hasPersistedBrowser ||
+    (Boolean(browserPanelSessionId) && browserPanelStatus === "running");
+  const { data: sessionData } = useSession();
+  const isGuest = guestRegex.test(sessionData?.user?.email ?? "");
+  const browserbaseEnabled = useBrowserbaseEnabled();
+
+  useBrowserIdleClose(chatId, status, browserbaseEnabled, !isGuest);
+
+  /** Restore browser session state from metadata — panel opens on user click. */
   useEffect(() => {
-    const latest = chatMetadata?.browserSessions.history.at(0);
-    if (!latest || isBrowserPanelVisible) {
+    const active = chatMetadata?.browserSessions.active;
+    if (!active || isBrowserPanelVisible) {
       return;
     }
 
-    if (latest.status === "running" || latest.status === "starting") {
-      setBrowserPanel({
-        sessionId: latest.browserbaseSessionId,
-        liveViewUrl: latest.liveViewUrl ?? null,
-        title: latest.title ?? "Live browser",
+    setBrowserPanel((current) => {
+      if (current.sessionId === active.browserbaseSessionId) {
+        return current;
+      }
+
+      return {
+        sessionId: active.browserbaseSessionId,
+        liveViewUrl: active.liveViewUrl ?? null,
+        title: active.title ?? "Live browser",
         status: "running",
         isVisible: false,
-      });
-    }
+      };
+    });
   }, [chatMetadata, isBrowserPanelVisible, setBrowserPanel]);
 
   const uploadCount = chatMetadata?.uploads.count ?? 0;
-  const browserSessionCount =
-    chatMetadata?.browserSessions.history.length ?? 0;
+
+  /** Hide normal greeting/composer while picking mode or filling Trimble form. */
+  const showTrimbleSetup =
+    sessionType === "trimble_automation" && !trimbleSetupComplete;
+  const gateComposer = showSessionPicker || showTrimbleSetup;
 
   return (
     <>
@@ -115,75 +152,137 @@ export function ChatShell() {
           )}
         >
           <ChatHeader
-            browserSessionCount={browserSessionCount}
             chatId={chatId}
+            hasActiveBrowser={hasActiveBrowser}
             isReadonly={isReadonly}
+            onOpenBrowser={() => {
+              if (browserPanelSessionId && browserPanelStatus === "running") {
+                setBrowserPanel((current) => ({
+                  ...current,
+                  isVisible: true,
+                }));
+                return;
+              }
+
+              openBrowserPanel();
+            }}
             selectedVisibilityType={visibilityType}
             uploadCount={uploadCount}
           />
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-background md:rounded-tl-[12px] md:border-t md:border-l md:border-border/40">
-            <Messages
-              addToolApprovalResponse={addToolApprovalResponse}
-              chatId={chatId}
-              isArtifactVisible={showRightPanel}
-              isLoading={isLoading}
-              isReadonly={isReadonly}
-              messages={messages}
-              onEditMessage={(msg) => {
-                const text = msg.parts
-                  ?.filter((p) => p.type === "text")
-                  .map((p) => p.text)
-                  .join("");
-                setInput(text ?? "");
-                setEditingMessage(msg);
-              }}
-              regenerate={regenerate}
-              selectedModelId={currentModelId}
-              setMessages={setMessages}
-              status={status}
-              votes={votes}
-            />
+            {gateComposer ? (
+              <div className="flex flex-1 items-center justify-center overflow-y-auto py-8">
+                {showSessionPicker ? (
+                  <SessionTypePicker onSelect={setSessionType} />
+                ) : (
+                  <TrimbleSetupForm
+                    attachments={attachments}
+                    chatId={chatId}
+                    onProceed={async ({ skill, secretIds }) => {
+                      setReferencedSkillIds([skill.id]);
+                      setReferencedSecretIds(secretIds);
+                      setTrimbleSetupComplete(true);
 
-            <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
-              {!isReadonly && (
-                <MultimodalInput
-                  attachments={attachments}
+                      const fileParts = attachments.map((attachment) => ({
+                        type: "file" as const,
+                        url: attachment.url,
+                        name: attachment.name,
+                        mediaType: attachment.contentType,
+                        uploadId: attachment.id,
+                        useInBrowser: true,
+                      }));
+
+                      window.history.pushState(
+                        {},
+                        "",
+                        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
+                      );
+
+                      await sendMessage({
+                        id: generateUUID(),
+                        role: "user",
+                        parts: [
+                          ...fileParts,
+                          {
+                            type: "text",
+                            text: buildTrimbleKickoffText(skill.slug),
+                          },
+                        ],
+                      });
+
+                      setAttachments([]);
+                    }}
+                    setAttachments={setAttachments}
+                    visibilityType={visibilityType}
+                  />
+                )}
+              </div>
+            ) : (
+              <>
+                <Messages
+                  addToolApprovalResponse={addToolApprovalResponse}
                   chatId={chatId}
-                  editingMessage={editingMessage}
-                  input={input}
+                  isArtifactVisible={showRightPanel}
                   isLoading={isLoading}
+                  isReadonly={isReadonly}
                   messages={messages}
-                  onCancelEdit={() => {
-                    setEditingMessage(null);
-                    setInput("");
+                  onEditMessage={(msg) => {
+                    const text = msg.parts
+                      ?.filter((p) => p.type === "text")
+                      .map((p) => p.text)
+                      .join("");
+                    setInput(text ?? "");
+                    setEditingMessage(msg);
                   }}
-                  onModelChange={setCurrentModelId}
+                  regenerate={regenerate}
                   selectedModelId={currentModelId}
-                  selectedVisibilityType={visibilityType}
-                  sendMessage={
-                    editingMessage
-                      ? async () => {
-                          const msg = editingMessage;
-                          setEditingMessage(null);
-                          await submitEditedMessage({
-                            message: msg,
-                            text: input,
-                            setMessages,
-                            regenerate,
-                          });
-                          setInput("");
-                        }
-                      : sendMessage
-                  }
-                  setAttachments={setAttachments}
-                  setInput={setInput}
                   setMessages={setMessages}
                   status={status}
-                  stop={stop}
+                  votes={votes}
                 />
-              )}
-            </div>
+
+                <div className="sticky bottom-0 z-1 mx-auto flex w-full max-w-4xl gap-2 border-t-0 bg-background px-2 pb-3 md:px-4 md:pb-4">
+                  {!isReadonly && (
+                    <MultimodalInput
+                      attachments={attachments}
+                      chatId={chatId}
+                      editingMessage={editingMessage}
+                      input={input}
+                      isLoading={isLoading}
+                      messages={messages}
+                      onCancelEdit={() => {
+                        setEditingMessage(null);
+                        setInput("");
+                      }}
+                      onModelChange={setCurrentModelId}
+                      selectedModelId={currentModelId}
+                      selectedVisibilityType={visibilityType}
+                      sendMessage={
+                        editingMessage
+                          ? async () => {
+                              const msg = editingMessage;
+                              setEditingMessage(null);
+                              await submitEditedMessage({
+                                message: msg,
+                                text: input,
+                                setMessages,
+                                regenerate,
+                              });
+                              setInput("");
+                            }
+                          : sendMessage
+                      }
+                      setAttachments={setAttachments}
+                      setInput={setInput}
+                      setMessages={setMessages}
+                      status={status}
+                      stop={stop}
+                    />
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </div>
 

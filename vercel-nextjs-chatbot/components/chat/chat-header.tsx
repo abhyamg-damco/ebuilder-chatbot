@@ -1,8 +1,9 @@
 "use client";
 
-import { PanelLeftIcon } from "lucide-react";
+import { FileTextIcon, MonitorIcon, PanelLeftIcon } from "lucide-react";
 import Link from "next/link";
 import { memo } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { VercelIcon } from "./icons";
@@ -13,13 +14,15 @@ function PureChatHeader({
   selectedVisibilityType,
   isReadonly,
   uploadCount = 0,
-  browserSessionCount = 0,
+  hasActiveBrowser = false,
+  onOpenBrowser,
 }: {
   chatId: string;
   selectedVisibilityType: VisibilityType;
   isReadonly: boolean;
   uploadCount?: number;
-  browserSessionCount?: number;
+  hasActiveBrowser?: boolean;
+  onOpenBrowser?: () => void;
 }) {
   const { state, toggleSidebar, isMobile } = useSidebar();
 
@@ -54,14 +57,29 @@ function PureChatHeader({
         />
       )}
 
-      <div className="ml-auto flex items-center gap-2 text-muted-foreground text-xs">
+      <div className="ml-auto flex items-center gap-2">
         {uploadCount > 0 ? (
-          <span data-testid="chat-upload-count">{uploadCount} file{uploadCount === 1 ? "" : "s"}</span>
+          <Badge
+            className="h-6 gap-1 rounded-md px-2 text-[11px] font-normal"
+            data-testid="chat-upload-count"
+            variant="outline"
+          >
+            <FileTextIcon />
+            {uploadCount} file{uploadCount === 1 ? "" : "s"}
+          </Badge>
         ) : null}
-        {browserSessionCount > 0 ? (
-          <span data-testid="chat-browser-session-count">
-            {browserSessionCount} browser{browserSessionCount === 1 ? "" : "s"}
-          </span>
+        {hasActiveBrowser ? (
+          <Badge
+            asChild
+            className="h-6 cursor-pointer gap-1 rounded-md px-2 text-[11px] font-normal hover:bg-muted"
+            data-testid="chat-browser-session-count"
+            variant="outline"
+          >
+            <button onClick={onOpenBrowser} type="button">
+              <MonitorIcon />
+              1 browser
+            </button>
+          </Badge>
         ) : null}
       </div>
     </header>
@@ -74,6 +92,7 @@ export const ChatHeader = memo(PureChatHeader, (prevProps, nextProps) => {
     prevProps.selectedVisibilityType === nextProps.selectedVisibilityType &&
     prevProps.isReadonly === nextProps.isReadonly &&
     prevProps.uploadCount === nextProps.uploadCount &&
-    prevProps.browserSessionCount === nextProps.browserSessionCount
+    prevProps.hasActiveBrowser === nextProps.hasActiveBrowser &&
+    prevProps.onOpenBrowser === nextProps.onOpenBrowser
   );
 });

@@ -1,3 +1,4 @@
+import { DEFAULT_BROWSER_IDLE_TIMEOUT_MS } from "@/lib/settings/defaults";
 import { isBrowserbaseEnabled } from "@/lib/browserbase/config";
 
 /**
@@ -7,5 +8,8 @@ import { isBrowserbaseEnabled } from "@/lib/browserbase/config";
  * Used by the client to show "Use in browser" attachment controls.
  */
 export function GET() {
-  return Response.json({ enabled: isBrowserbaseEnabled() });
+  return Response.json({
+    enabled: isBrowserbaseEnabled(),
+    idleTimeoutMs: DEFAULT_BROWSER_IDLE_TIMEOUT_MS,
+  });
 }

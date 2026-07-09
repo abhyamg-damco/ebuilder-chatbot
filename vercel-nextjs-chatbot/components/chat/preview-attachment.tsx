@@ -24,6 +24,7 @@ export const PreviewAttachment = ({
   onRemove,
   showBrowserToggle = false,
   onUseInBrowserChange,
+  onOpenBrowser,
 }: {
   attachment: Attachment;
   isUploading?: boolean;
@@ -31,18 +32,42 @@ export const PreviewAttachment = ({
   /** When true, show the "Use in browser" checkbox (Browserbase configured). */
   showBrowserToggle?: boolean;
   onUseInBrowserChange?: (useInBrowser: boolean) => void;
+  /** Opens the live browser panel when the attachment is marked for browser use. */
+  onOpenBrowser?: () => void;
 }) => {
   const { name, url, contentType, category, sizeBytes, useInBrowser } =
     attachment;
   const isImage =
     category === "image" || contentType?.startsWith("image/");
+  const canOpenBrowser = useInBrowser && onOpenBrowser;
 
-  return (
+  const card = (
     <div
-      className="group relative flex shrink-0 flex-col gap-1"
-      data-testid="input-attachment-preview"
+      className={cn(
+        "relative h-24 w-24 overflow-hidden rounded-xl border border-border/40 bg-muted",
+        canOpenBrowser &&
+          "cursor-pointer transition-colors hover:border-primary/40 hover:bg-muted/80"
+      )}
+      onClick={
+        canOpenBrowser
+          ? () => {
+              onOpenBrowser();
+            }
+          : undefined
+      }
+      onKeyDown={
+        canOpenBrowser
+          ? (event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                onOpenBrowser();
+              }
+            }
+          : undefined
+      }
+      role={canOpenBrowser ? "button" : undefined}
+      tabIndex={canOpenBrowser ? 0 : undefined}
     >
-      <div className="relative h-24 w-24 overflow-hidden rounded-xl border border-border/40 bg-muted">
         {isImage && url ? (
           <Image
             alt={name ?? "attachment"}
@@ -69,7 +94,7 @@ export const PreviewAttachment = ({
         {useInBrowser ? (
           <div
             className="absolute bottom-1 left-1 flex items-center gap-0.5 rounded bg-primary/90 px-1 py-0.5 text-[8px] font-medium text-primary-foreground"
-            title="Will be used in browser"
+            title={canOpenBrowser ? "Open live browser" : "Will be used in browser"}
           >
             <GlobeIcon className="size-2.5" />
             Browser
@@ -88,13 +113,24 @@ export const PreviewAttachment = ({
         {onRemove && !isUploading && (
           <button
             className="absolute top-1.5 right-1.5 flex size-5 items-center justify-center rounded-full bg-black/60 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/80 group-hover:opacity-100"
-            onClick={onRemove}
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove();
+            }}
             type="button"
           >
             <CrossSmallIcon size={10} />
           </button>
         )}
       </div>
+  );
+
+  return (
+    <div
+      className="group relative flex shrink-0 flex-col gap-1"
+      data-testid="input-attachment-preview"
+    >
+      {card}
 
       {showBrowserToggle && onUseInBrowserChange && !isUploading ? (
         <label

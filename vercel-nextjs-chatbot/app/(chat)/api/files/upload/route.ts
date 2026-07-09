@@ -33,6 +33,9 @@ import { generateUUID } from "@/lib/utils";
 
 const chatIdSchema = z.string().uuid();
 const visibilitySchema = z.enum(["public", "private"]).optional();
+const sessionTypeSchema = z
+  .enum(["general", "trimble_automation"])
+  .optional();
 
 /**
  * Ensures a chat row exists before uploading (new chats are created on first message or first upload).
@@ -41,10 +44,12 @@ async function ensureChatForUpload({
   chatId,
   userId,
   visibility,
+  sessionType,
 }: {
   chatId: string;
   userId: string;
   visibility?: "public" | "private";
+  sessionType?: "general" | "trimble_automation";
 }) {
   const existing = await getChatById({ id: chatId });
 
@@ -60,6 +65,7 @@ async function ensureChatForUpload({
     userId,
     title: "New chat",
     visibility: visibility ?? "private",
+    sessionType: sessionType ?? "general",
   });
 
   return getChatById({ id: chatId });
@@ -113,11 +119,17 @@ export async function POST(request: Request) {
     const visibilityResult = visibilitySchema.safeParse(
       formData.get("visibility")
     );
+    const sessionTypeResult = sessionTypeSchema.safeParse(
+      formData.get("sessionType")
+    );
 
     const chat = await ensureChatForUpload({
       chatId,
       userId: session.user.id,
       visibility: visibilityResult.success ? visibilityResult.data : undefined,
+      sessionType: sessionTypeResult.success
+        ? sessionTypeResult.data
+        : undefined,
     });
 
     if (!chat) {

@@ -2,9 +2,9 @@ import { type NextRequest, NextResponse } from "next/server";
 import { getToken } from "next-auth/jwt";
 import {
   guestRegex,
-  isDevelopmentEnvironment,
   isPublicRegistrationEnabled,
   isTestEnvironment,
+  shouldUseSecureCookies,
 } from "./lib/constants";
 
 const publicPaths = ["/login", "/register"];
@@ -23,7 +23,7 @@ export async function proxy(request: NextRequest) {
   const token = await getToken({
     req: request,
     secret: process.env.AUTH_SECRET,
-    secureCookie: !isDevelopmentEnvironment,
+    secureCookie: shouldUseSecureCookies(),
   });
 
   const base = process.env.NEXT_PUBLIC_BASE_PATH ?? "";

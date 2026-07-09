@@ -27,6 +27,7 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 # Cloud Run injects PORT; default matches workflow CLOUD_RUN_PORT.
 ENV PORT=8080
+# Bind on all interfaces. Set AUTH_URL at runtime to your public URL (e.g. http://localhost:3002 for local docker run).
 ENV HOSTNAME=0.0.0.0
 
 RUN addgroup --system --gid 1001 nodejs \

@@ -45,11 +45,14 @@ export function isBrowserbaseEnabled(): boolean {
 /**
  * Directory for Stagehand's action cache (observe→act replay without LLM).
  *
- * Vercel serverless has a read-only filesystem except /tmp, so we use
- * /tmp/stagehand-cache in production and a project-local folder in dev.
+ * Serverless/container runtimes only allow writes under `/tmp`.
  *
- * @returns Absolute or relative path for Stagehand cacheDir option.
+ * @returns Absolute path for Stagehand cacheDir option.
  */
 export function getStagehandCacheDir(): string {
-  return process.env.VERCEL ? "/tmp/stagehand-cache" : ".stagehand-cache";
+  if (process.env.VERCEL || process.env.K_SERVICE) {
+    return "/tmp/stagehand-cache";
+  }
+
+  return ".stagehand-cache";
 }

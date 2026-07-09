@@ -8,6 +8,29 @@ export const isTestEnvironment = Boolean(
     process.env.CI_PLAYWRIGHT
 );
 
+/**
+ * Whether Auth.js session cookies use the `Secure` flag.
+ * Must match how cookies are issued: HTTP local/Docker needs false; HTTPS production needs true.
+ */
+export function shouldUseSecureCookies(): boolean {
+  if (process.env.AUTH_SECURE_COOKIES === "true") {
+    return true;
+  }
+  if (process.env.AUTH_SECURE_COOKIES === "false") {
+    return false;
+  }
+
+  const authUrl = process.env.AUTH_URL ?? process.env.NEXTAUTH_URL ?? "";
+  if (authUrl.startsWith("https://")) {
+    return true;
+  }
+  if (authUrl.startsWith("http://")) {
+    return false;
+  }
+
+  return isProductionEnvironment;
+}
+
 export const guestRegex = /^guest-\d+$/;
 
 /** When true, visitors can self-register at /register. Default: admin-created users only. */

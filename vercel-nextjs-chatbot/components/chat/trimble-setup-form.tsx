@@ -21,7 +21,10 @@ import {
 } from "@/components/ui/select";
 import type { AgentSkillPublic } from "@/lib/skills/types";
 import { FILE_ACCEPT } from "@/lib/storage/mime";
-import { TRIMBLE_SECRET_SLUGS } from "@/lib/secrets/trimble";
+import {
+  TRIMBLE_DEFAULT_CREDENTIALS,
+  TRIMBLE_SECRET_SLUGS,
+} from "@/lib/secrets/trimble";
 import type { Attachment } from "@/lib/types";
 import { fetcher } from "@/lib/utils";
 
@@ -57,9 +60,15 @@ export function TrimbleSetupForm({
 }: TrimbleSetupFormProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadQueue, setUploadQueue] = useState<string[]>([]);
-  const [websiteUrl, setWebsiteUrl] = useState("");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState<string>(
+    TRIMBLE_DEFAULT_CREDENTIALS.websiteUrl
+  );
+  const [username, setUsername] = useState<string>(
+    TRIMBLE_DEFAULT_CREDENTIALS.username
+  );
+  const [password, setPassword] = useState<string>(
+    TRIMBLE_DEFAULT_CREDENTIALS.password
+  );
   const [skillId, setSkillId] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 

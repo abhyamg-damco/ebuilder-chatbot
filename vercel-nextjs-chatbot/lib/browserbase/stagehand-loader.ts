@@ -70,6 +70,9 @@ export async function createStagehandInstance(
     model: BROWSERBASE_MODEL,
     // Cloud session stays alive after disconnect — required for multi-turn flows.
     keepAlive: true,
+    // Stagehand defaults to pino-pretty logging, which fails in Next standalone /
+    // Cloud Run ("unable to determine transport target for pino-pretty").
+    disablePino: process.env.NODE_ENV === "production" || process.env.NODE_ENV?.includes("remote"),
     browserbaseSessionCreateParams: {
       keepAlive: true,
       // Default 1h — enough for OTP / manual steps between chat messages.

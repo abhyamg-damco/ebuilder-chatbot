@@ -12,6 +12,13 @@ from __future__ import annotations
 import sys
 
 
+def _strip_quotes(value: str) -> str:
+    """Remove a single layer of matching surrounding quotes, if present."""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
 def main() -> int:
     if len(sys.argv) != 3:
         print("usage: cloud-run-env-from-dotenv.py <input.env> <output.yaml>", file=sys.stderr)
@@ -23,12 +30,13 @@ def main() -> int:
     with open(path, "r", encoding="utf-8", errors="replace") as f:
         for raw in f:
             line = raw.rstrip("\n\r")
-            if not line or line.startswith("#"):
+            if not line or line.lstrip().startswith("#"):
                 continue
             if "=" not in line:
                 continue
             key, _, value = line.partition("=")
             key = key.strip()
+            value = _strip_quotes(value)
             if not key or not value:
                 continue
             if key == "PORT":

@@ -22,6 +22,7 @@ RUN pnpm exec next build
 # Production image: only standalone server + static assets.
 FROM node:20-alpine AS runner
 WORKDIR /app
+RUN apk add --no-cache libc6-compat
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 # Cloud Run injects PORT; default matches workflow CLOUD_RUN_PORT.

@@ -14,9 +14,21 @@ const nextConfig: NextConfig = {
     "@browserbasehq/stagehand",
     "@browserbasehq/sdk",
     "@google-cloud/storage",
+    "@napi-rs/canvas",
     "pdf-parse",
+    "pdfjs-dist",
     "mammoth",
   ],
+  // Standalone Docker must include native pdf-parse/pdfjs canvas binaries.
+  outputFileTracingIncludes: {
+    "/*": [
+      "./node_modules/@napi-rs/canvas/**/*",
+      "./node_modules/@napi-rs/canvas-linux-x64-musl/**/*",
+      "./node_modules/@napi-rs/canvas-linux-x64-gnu/**/*",
+      "./node_modules/pdf-parse/**/*",
+      "./node_modules/pdfjs-dist/**/*",
+    ],
+  },
   // Enables a minimal production bundle for self-hosted Docker / Cloud Run.
   output: "standalone",
   ...(basePath

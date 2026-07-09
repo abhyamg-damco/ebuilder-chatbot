@@ -4,7 +4,6 @@
 import "server-only";
 
 import mammoth from "mammoth";
-import { PDFParse } from "pdf-parse";
 import type { AllowedMimeType, UploadCategory } from "./mime";
 import { logStorageError } from "./logger";
 
@@ -14,6 +13,26 @@ export type ExtractedDocumentText = {
   extractedTextPreview?: string;
   pageCount?: number;
 };
+
+type PdfParseCtor = typeof import("pdf-parse").PDFParse;
+
+let pdfParseCtorPromise: Promise<PdfParseCtor> | undefined;
+
+/**
+ * Lazily loads pdf-parse after installing Node canvas polyfills required by pdfjs-dist.
+ * Avoids top-level import so routes that only handle images/DOCX do not crash on module load.
+ */
+async function getPdfParseCtor(): Promise<PdfParseCtor> {
+  if (!pdfParseCtorPromise) {
+    pdfParseCtorPromise = (async () => {
+      await import("./pdf-polyfills");
+      const { PDFParse } = await import("pdf-parse");
+      return PDFParse;
+    })();
+  }
+
+  return pdfParseCtorPromise;
+}
 
 /**
  * Extracts plain text from uploaded document buffers for agent/system-prompt context.
@@ -39,6 +58,7 @@ export async function extractTextPreview({
 
   if (mimeType === "application/pdf") {
     try {
+      const PDFParse = await getPdfParseCtor();
       const parser = new PDFParse({ data: buffer });
       const result = await parser.getText();
       await parser.destroy();

@@ -19,6 +19,7 @@ import {
 import useSWR, { useSWRConfig } from "swr";
 import { unstable_serialize } from "swr/infinite";
 import { useDataStream } from "@/components/chat/data-stream-provider";
+import { useAgentActivityContext } from "@/components/chat/agent-activity-provider";
 import { getChatHistoryPaginationKey } from "@/components/chat/sidebar-history";
 import { toast } from "@/components/chat/toast";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
@@ -89,6 +90,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { setDataStream } = useDataStream();
+  const { ingestActivityEvent, resetForChat } = useAgentActivityContext();
   const { mutate } = useSWRConfig();
 
   const chatIdFromUrl = extractChatId(pathname);
@@ -280,6 +282,10 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       },
     }),
     onData: (dataPart) => {
+      if (dataPart.type === "data-agent-activity") {
+        ingestActivityEvent(dataPart.data);
+      }
+
       setDataStream((ds) => (ds ? [...ds, dataPart] : []));
     },
     onFinish: () => {
@@ -319,11 +325,12 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (prevChatIdRef.current !== chatId) {
       prevChatIdRef.current = chatId;
+      resetForChat(chatId);
       if (isNewChat) {
         setMessages([]);
       }
     }
-  }, [chatId, isNewChat, setMessages]);
+  }, [chatId, isNewChat, resetForChat, setMessages]);
 
   useEffect(() => {
     if (chatData && !isNewChat) {

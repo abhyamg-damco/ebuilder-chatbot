@@ -13,6 +13,11 @@ import {
   uuid,
   varchar,
 } from "drizzle-orm/pg-core";
+import type {
+  InvoiceReviewConfig,
+  InvoiceReviewEnabledChecks,
+  InvoiceReviewTolerances,
+} from "@/lib/invoice-review/types";
 
 export const user = pgTable(
   "User",
@@ -34,8 +39,11 @@ export const user = pgTable(
 
 export type User = InferSelectModel<typeof user>;
 
-/** Chat session mode: general e-Builder chat vs Trimble browser automation. */
-export type ChatSessionType = "general" | "trimble_automation";
+/** Chat session mode: general e-Builder chat vs Trimble browser automation vs invoice review. */
+export type ChatSessionType =
+  | "general"
+  | "trimble_automation"
+  | "invoice_review";
 
 export const chat = pgTable("Chat", {
   id: uuid("id").primaryKey().notNull().defaultRandom(),
@@ -48,8 +56,9 @@ export const chat = pgTable("Chat", {
     .notNull()
     .default("private"),
   sessionType: varchar("sessionType", {
-    enum: ["general", "trimble_automation"],
+    enum: ["general", "trimble_automation", "invoice_review"],
   }),
+  invoiceReviewConfig: json("invoiceReviewConfig").$type<InvoiceReviewConfig>(),
 });
 
 export type Chat = InferSelectModel<typeof chat>;
@@ -92,7 +101,9 @@ export const document = pgTable(
     createdAt: timestamp("createdAt").notNull(),
     title: text("title").notNull(),
     content: text("content"),
-    kind: varchar("text", { enum: ["text", "code", "image", "sheet"] })
+    kind: varchar("text", {
+      enum: ["text", "code", "image", "sheet", "advisory-brief"],
+    })
       .notNull()
       .default("text"),
     userId: uuid("userId")
@@ -201,6 +212,42 @@ export const agentSkill = pgTable(
 );
 
 export type AgentSkill = InferSelectModel<typeof agentSkill>;
+
+/**
+ * Invoice review persona — review style, default tolerances, and check toggles.
+ * Selected at chat creation for Invoice Review Advisor sessions.
+ */
+export const persona = pgTable(
+  "Persona",
+  {
+    id: uuid("id").primaryKey().notNull().defaultRandom(),
+    userId: uuid("userId")
+      .notNull()
+      .references(() => user.id),
+    name: varchar("name", { length: 128 }).notNull(),
+    slug: varchar("slug", { length: 64 }).notNull(),
+    description: text("description"),
+    instructions: text("instructions").notNull(),
+    defaultTolerances: json("defaultTolerances")
+      .$type<InvoiceReviewTolerances>()
+      .notNull(),
+    defaultEnabledChecks: json("defaultEnabledChecks")
+      .$type<InvoiceReviewEnabledChecks>()
+      .notNull(),
+    enabled: boolean("enabled").notNull().default(true),
+    createdAt: timestamp("createdAt").notNull().defaultNow(),
+    updatedAt: timestamp("updatedAt").notNull().defaultNow(),
+  },
+  (table) => ({
+    userSlugUnique: uniqueIndex("Persona_userId_slug_unique").on(
+      table.userId,
+      table.slug
+    ),
+    userIdx: index("Persona_userId_idx").on(table.userId),
+  })
+);
+
+export type Persona = InferSelectModel<typeof persona>;
 
 /**
  * Per-user secret vault entry (URL, username, password, API key, etc.).

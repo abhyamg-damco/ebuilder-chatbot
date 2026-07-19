@@ -38,4 +38,14 @@ Avoids re-fetching when answering "which project had the most changes" type ques
 Orchestrates: multi-strategy project search (name + custom fields like Project ID) → Budgets schema discovery → budget query.
 Pass projectSearchTerm exactly as the user wrote it (e.g. "ESRI 005").
 If status is incomplete/partial, follow nextSteps and agentDirective — do NOT tell user data is missing without trying them.`,
+
+  assemble_invoice_evidence_pack: `Invoice Review Advisor — ALWAYS call first for invoice review requests.
+Gathers invoice header + line items (/items details), commitment + SOV, last 4-5 prior invoices, change orders, retainage terms, budget context.
+Pass commitmentInvoiceId when known, OR invoiceNumber + projectSearchTerm/commitmentId.
+Returns normalized EvidencePack with citation refs on every record.`,
+
+  evaluate_invoice_checks: `Invoice Review Advisor — call AFTER assemble_invoice_evidence_pack.
+Runs deterministic checks (over-billing, duplicates, retainage, math, CO coverage, front-loading, large period).
+Pass pack from assemble tool + tolerances + enabledChecks from the chat session config.
+Returns flags with severity, $ impact, and citations. Advisory only — never auto-approve.`,
 } as const;

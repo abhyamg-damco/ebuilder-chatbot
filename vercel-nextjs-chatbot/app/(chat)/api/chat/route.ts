@@ -129,6 +129,7 @@ export async function POST(request: Request) {
       referencedSkillIds,
       referencedSecretIds,
       sessionType: requestSessionType,
+      invoiceReviewConfig,
     } = requestBody;
 
     const session = await requireRegularSession();
@@ -149,6 +150,8 @@ export async function POST(request: Request) {
     /** Effective session mode for this turn (request wins on create; DB thereafter). */
     let effectiveSessionType =
       requestSessionType ?? chat?.sessionType ?? null;
+    let effectiveInvoiceReviewConfig =
+      chat?.invoiceReviewConfig ?? invoiceReviewConfig ?? null;
 
     if (chat) {
       if (chat.userId !== session.user.id) {
@@ -156,6 +159,8 @@ export async function POST(request: Request) {
       }
       messagesFromDb = await getMessagesByChatId({ id });
       effectiveSessionType = chat.sessionType ?? requestSessionType ?? null;
+      effectiveInvoiceReviewConfig =
+        chat.invoiceReviewConfig ?? invoiceReviewConfig ?? null;
     } else if (message?.role === "user") {
       await saveChat({
         id,
@@ -163,8 +168,13 @@ export async function POST(request: Request) {
         title: "New chat",
         visibility: selectedVisibilityType,
         sessionType: requestSessionType ?? "general",
+        invoiceReviewConfig:
+          requestSessionType === "invoice_review"
+            ? invoiceReviewConfig ?? null
+            : undefined,
       });
       effectiveSessionType = requestSessionType ?? "general";
+      effectiveInvoiceReviewConfig = invoiceReviewConfig ?? null;
       titlePromise = generateTitleFromUserMessage({ message });
     }
 
@@ -362,6 +372,7 @@ export async function POST(request: Request) {
             activeSkills,
             activeSecrets,
             sessionType: effectiveSessionType,
+            invoiceReviewConfig: effectiveInvoiceReviewConfig,
           }),
           messages: modelMessages,
           stopWhen: stepCountIs(

@@ -26,6 +26,7 @@ import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { useAutoResume } from "@/hooks/use-auto-resume";
 import { DEFAULT_CHAT_MODEL } from "@/lib/ai/models";
 import type { ChatSessionType, Vote } from "@/lib/db/schema";
+import type { InvoiceReviewConfig } from "@/lib/invoice-review/types";
 import { ChatbotError } from "@/lib/errors";
 import type { ChatMessage } from "@/lib/types";
 import { fetcher, fetchWithErrorHandlers, generateUUID } from "@/lib/utils";
@@ -63,6 +64,10 @@ type ActiveChatContextValue = {
   /** Trimble pre-form completed; composer unlocked. */
   trimbleSetupComplete: boolean;
   setTrimbleSetupComplete: (complete: boolean) => void;
+  /** Invoice review pre-form completed; composer unlocked. */
+  invoiceReviewSetupComplete: boolean;
+  setInvoiceReviewSetupComplete: (complete: boolean) => void;
+  setInvoiceReviewConfig: (config: InvoiceReviewConfig | null) => void;
   /** True when New chat asked for a mode picker (`?selectSession=1`). */
   showSessionPicker: boolean;
 };
@@ -112,6 +117,9 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     () => (wantsSessionPicker ? null : "general")
   );
   const [trimbleSetupComplete, setTrimbleSetupComplete] = useState(false);
+  const [invoiceReviewSetupComplete, setInvoiceReviewSetupComplete] =
+    useState(false);
+  const invoiceReviewConfigRef = useRef<InvoiceReviewConfig | null>(null);
 
   const sessionTypeRef = useRef(sessionType);
   useEffect(() => {
@@ -137,15 +145,29 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     referencedSecretIdsRef.current = ids;
   }, []);
 
+  const setInvoiceReviewConfig = useCallback(
+    (config: InvoiceReviewConfig | null) => {
+      invoiceReviewConfigRef.current = config;
+    },
+    []
+  );
+
   const setSessionType = useCallback((type: ChatSessionType) => {
     setSessionTypeState(type);
     sessionTypeRef.current = type;
     if (type === "trimble_automation") {
       setCurrentModelId(TRIMBLE_DEFAULT_MODEL);
       setTrimbleSetupComplete(false);
+      setInvoiceReviewSetupComplete(true);
+    } else if (type === "invoice_review") {
+      setCurrentModelId(DEFAULT_CHAT_MODEL);
+      setTrimbleSetupComplete(true);
+      setInvoiceReviewSetupComplete(false);
+      invoiceReviewConfigRef.current = null;
     } else {
       setCurrentModelId(DEFAULT_CHAT_MODEL);
       setTrimbleSetupComplete(true);
+      setInvoiceReviewSetupComplete(true);
     }
     clearSelectSessionQuery();
   }, []);
@@ -177,6 +199,7 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
     if (wantsSessionPicker) {
       setSessionTypeState(null);
       setTrimbleSetupComplete(false);
+      setInvoiceReviewSetupComplete(false);
       setCurrentModelId(DEFAULT_CHAT_MODEL);
     } else {
       // Base URL `/` (or new chat without picker flag) → eBuilder default.
@@ -276,6 +299,10 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
             ...(referencedSecretIdsRef.current.length > 0
               ? { referencedSecretIds: referencedSecretIdsRef.current }
               : {}),
+            ...(sessionTypeRef.current === "invoice_review" &&
+            invoiceReviewConfigRef.current
+              ? { invoiceReviewConfig: invoiceReviewConfigRef.current }
+              : {}),
             ...request.body,
           },
         };
@@ -334,6 +361,19 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (chatData && !isNewChat) {
+      if (chatData.sessionType) {
+        setSessionTypeState(chatData.sessionType);
+        sessionTypeRef.current = chatData.sessionType;
+      }
+      if (chatData.sessionType === "trimble_automation") {
+        setTrimbleSetupComplete(true);
+      }
+      if (chatData.sessionType === "invoice_review") {
+        setInvoiceReviewSetupComplete(true);
+        if (chatData.invoiceReviewConfig) {
+          invoiceReviewConfigRef.current = chatData.invoiceReviewConfig;
+        }
+      }
       const cookieModel = document.cookie
         .split("; ")
         .find((row) => row.startsWith("chat-model="))
@@ -408,6 +448,9 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       setSessionType,
       trimbleSetupComplete,
       setTrimbleSetupComplete,
+      invoiceReviewSetupComplete,
+      setInvoiceReviewSetupComplete,
+      setInvoiceReviewConfig,
       showSessionPicker,
     }),
     [
@@ -433,6 +476,9 @@ export function ActiveChatProvider({ children }: { children: ReactNode }) {
       setSessionType,
       trimbleSetupComplete,
       showSessionPicker,
+      invoiceReviewSetupComplete,
+      setInvoiceReviewSetupComplete,
+      setInvoiceReviewConfig,
     ]
   );
 

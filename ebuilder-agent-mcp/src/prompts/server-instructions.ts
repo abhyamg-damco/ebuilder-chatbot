@@ -33,6 +33,14 @@ EQ, NE, LIKE, IN, GT, GTE, LT, LTE. Example:
 }
 \`\`\`
 
+## Invoice Review Advisor workflow
+When the user asks to review an invoice or has a draw on their desk:
+1. **assemble_invoice_evidence_pack** — pass invoiceNumber + projectSearchTerm, or commitmentInvoiceId.
+2. **evaluate_invoice_checks** — pass the pack + session tolerances/enabledChecks from the system prompt.
+3. Create an **advisory-brief** artifact with flags, PASSED checks, recommendation, and citations.
+4. **Advisory only** — never approve or write back to e-Builder. Human retains final authority.
+5. For uploaded PDFs, use getChatUploads extracted text to identify invoice number/vendor, then fetch PMIS data.
+
 ## Question recipes
 ${QUESTION_RECIPES}
 `;

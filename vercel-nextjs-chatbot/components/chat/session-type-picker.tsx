@@ -1,6 +1,6 @@
 "use client";
 
-import { GlobeIcon, MessageSquareIcon } from "lucide-react";
+import { FileCheckIcon, GlobeIcon, MessageSquareIcon } from "lucide-react";
 import type { ChatSessionType } from "@/lib/db/schema";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +24,7 @@ export function SessionTypePicker({ onSelect }: SessionTypePickerProps) {
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-3 sm:grid-cols-2">
         <button
           className={cn(
             "group flex flex-col items-start gap-3 rounded-2xl border border-sky-200/70 bg-gradient-to-br from-sky-50 to-sky-100/40 p-5 text-left transition-all",
@@ -112,6 +112,54 @@ export function SessionTypePicker({ onSelect }: SessionTypePickerProps) {
                 key={step}
               >
                 <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-orange-200/80 font-medium text-[9px] text-orange-700 dark:bg-orange-900/50 dark:text-orange-300">
+                  {index + 1}
+                </span>
+                {step}
+              </li>
+            ))}
+          </ol>
+        </button>
+
+        <button
+          className={cn(
+            "group flex flex-col items-start gap-3 rounded-2xl border border-emerald-200/70 bg-gradient-to-br from-emerald-50 to-teal-100/40 p-5 text-left transition-all",
+            "hover:border-emerald-300 hover:shadow-md hover:shadow-emerald-100",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/60",
+            "dark:border-emerald-800/50 dark:from-emerald-950/50 dark:to-teal-900/20 dark:hover:border-emerald-700 dark:hover:shadow-emerald-950/40"
+          )}
+          onClick={() => onSelect("invoice_review")}
+          type="button"
+        >
+          <span className="flex items-center gap-1.5 font-mono text-[10px] text-emerald-600 uppercase tracking-wider dark:text-emerald-400">
+            <span className="size-2 rounded-full bg-emerald-500" />
+            Advisory mode
+          </span>
+
+          <div className="flex items-center gap-2">
+            <span className="flex size-8 items-center justify-center rounded-lg bg-emerald-500/15">
+              <FileCheckIcon className="size-4 text-emerald-600 dark:text-emerald-400" />
+            </span>
+            <span className="font-semibold text-base text-foreground">
+              Invoice Review Advisor
+            </span>
+          </div>
+
+          <p className="text-foreground/80 text-sm leading-relaxed">
+            Review a draw against contract, prior invoices, and change orders.
+            Advisory only — you approve.
+          </p>
+
+          <ol className="mt-auto w-full space-y-1.5 pt-1">
+            {[
+              "Pick persona and tolerances",
+              "Reference invoice in e-Builder or attach PDF",
+              "Get advisory brief with citations",
+            ].map((step, index) => (
+              <li
+                className="flex items-start gap-2 text-[11px] text-foreground/75"
+                key={step}
+              >
+                <span className="mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full bg-emerald-200/80 font-medium text-[9px] text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-300">
                   {index + 1}
                 </span>
                 {step}

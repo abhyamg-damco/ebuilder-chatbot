@@ -11,6 +11,7 @@
     "start:http": "node build/http.js",
     "typecheck": "tsc --noEmit",
     "smoke-test": "tsx src/smoke-test.ts",
+    "test": "node --import tsx --test src/checks/evaluate.test.ts",
     "prestart": "npm run build",
     "prestart:http": "npm run build"
   },

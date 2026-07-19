@@ -40,5 +40,6 @@ export async function GET(request: Request) {
     userId: chat.userId,
     isReadonly,
     sessionType: chat.sessionType ?? null,
+    invoiceReviewConfig: chat.invoiceReviewConfig ?? null,
   });
 }

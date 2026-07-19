@@ -54,7 +54,33 @@ export const postRequestBodySchema = z.object({
   selectedVisibilityType: z.enum(["public", "private"]),
   referencedSkillIds: z.array(z.string().uuid()).max(5).optional(),
   referencedSecretIds: z.array(z.string().uuid()).max(10).optional(),
-  sessionType: z.enum(["general", "trimble_automation"]).optional(),
+  sessionType: z.enum(["general", "trimble_automation", "invoice_review"]).optional(),
+  invoiceReviewConfig: z
+    .object({
+      personaId: z.string().uuid().optional(),
+      personaName: z.string(),
+      personaInstructions: z.string(),
+      tolerances: z.object({
+        overBillPct: z.number(),
+        overBillMinUsd: z.number(),
+        mathMinUsd: z.number(),
+        retentionPctTol: z.number(),
+        frontLoadPct: z.number(),
+        largePeriodPct: z.number(),
+      }),
+      enabledChecks: z.object({
+        OVER_BILLING: z.boolean(),
+        DUPLICATE: z.boolean(),
+        RETAINAGE: z.boolean(),
+        MATH: z.boolean(),
+        CO_UNAPPROVED: z.boolean(),
+        FRONT_LOADING: z.boolean(),
+        PROGRESS: z.boolean(),
+        RFI_SCOPE: z.boolean(),
+        LARGE_PERIOD: z.boolean(),
+      }),
+    })
+    .optional(),
 });
 
 export type PostRequestBody = z.infer<typeof postRequestBodySchema>;

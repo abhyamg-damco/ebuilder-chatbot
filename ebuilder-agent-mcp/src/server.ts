@@ -3,6 +3,7 @@ import type { AppConfig } from "./config.js";
 import { SERVER_NAME, SERVER_VERSION } from "./config.js";
 import { EBuilderClient } from "./api/client.js";
 import { getServerInstructions } from "./prompts/server-instructions.js";
+import { registerToolPrompts } from "./prompts/register-prompts.js";
 import { registerDiscoverSchemaTools } from "./tools/discover-schema.js";
 import { registerQueryRecordsTool } from "./tools/query-records.js";
 import {
@@ -18,6 +19,7 @@ import { registerAggregateRecordsTool } from "./tools/aggregate-records.js";
 import { registerGetOriginalBudgetTool } from "./tools/get-original-budget.js";
 import { registerAssembleInvoiceEvidencePackTool } from "./tools/assemble-invoice-evidence-pack.js";
 import { registerEvaluateInvoiceChecksTool } from "./tools/evaluate-invoice-checks.js";
+import { registerSearchDocumentsTool } from "./tools/search-documents.js";
 
 /** Create and configure the e-Builder Construct MCP server with all tools. */
 export function createEBuilderMcpServer(config: AppConfig): McpServer {
@@ -41,6 +43,8 @@ export function createEBuilderMcpServer(config: AppConfig): McpServer {
   registerAggregateRecordsTool(server);
   registerAssembleInvoiceEvidencePackTool(server, client);
   registerEvaluateInvoiceChecksTool(server);
+  registerSearchDocumentsTool(server, client);
+  registerToolPrompts(server);
 
   return server;
 }

@@ -85,6 +85,21 @@ export const sheetArtifact = new Artifact<"sheet", Metadata>({
   ],
   toolbar: [
     {
+      description: "Format as bid leveling table",
+      icon: <LineChartIcon />,
+      onClick: ({ sendMessage }) => {
+        sendMessage({
+          role: "user",
+          parts: [
+            {
+              type: "text",
+              text: "Format this spreadsheet as a bid leveling table with clear bidder columns and totals.",
+            },
+          ],
+        });
+      },
+    },
+    {
       description: "Format and clean data",
       icon: <SparklesIcon />,
       onClick: ({ sendMessage }) => {

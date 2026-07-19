@@ -16,7 +16,16 @@ export function getServerInstructions(): string {
 2. **Resolve entities** — \`resolve_project\` / \`resolve_company\` OR use \`get_original_budget\` for budget questions.
 3. **Query data** — \`query_records\`, \`get_records\`, \`get_record_detail\`, \`query_processes\`.
 4. **Paginate** — check \`meta.totalRecords\` / \`meta.recordCount\`; increase \`pageNumber\`.
-5. **Aggregate** — \`aggregate_records\` for top-N, sums, counts.
+5. **Aggregate** — \`aggregate_records\` for top-N, sums, counts, group-by-month (groupByMonth + dateField).
+
+## Ivy Insights (host chatbot)
+After MCP tools return structured data, the host agent should call **createDocument** with:
+- \`chart\` for time series (spend by month)
+- \`sheet\` for leveling tables and line lists
+- \`dashboard\` for KPI summaries (top vendors, retainage)
+- \`file-preview\` after \`search_documents\` (use previewPath as fileUrl)
+
+Do not dump large tables in chat when a visual artifact is appropriate.
 
 ## API aliases
 - **Vendor** → \`Companies\`

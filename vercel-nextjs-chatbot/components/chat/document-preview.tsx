@@ -10,7 +10,16 @@ import {
   useRef,
 } from "react";
 import useSWR from "swr";
+import { BriefView } from "@/artifacts/advisory-brief/client";
+import { ChartView } from "@/components/insights/chart-view";
+import { DashboardView } from "@/components/insights/dashboard-view";
+import { FilePreviewView } from "@/components/insights/file-preview-view";
 import { useArtifact } from "@/hooks/use-artifact";
+import {
+  parseChartContent,
+  parseDashboardContent,
+  parseFilePreviewContent,
+} from "@/lib/insights/types";
 import type { Document } from "@/lib/db/schema";
 import { cn, fetcher } from "@/lib/utils";
 import type { ArtifactKind, UIArtifact } from "./artifact";
@@ -21,6 +30,7 @@ import {
   FileIcon,
   FullscreenIcon,
   ImageIcon,
+  LineChartIcon,
   LoaderIcon,
 } from "./icons";
 import { ImageEditor } from "./image-editor";
@@ -40,6 +50,17 @@ type DocumentPreviewProps = {
   args?: Partial<DocumentToolOutput> & { isUpdate?: boolean };
 };
 
+const WIDE_INSIGHT_KINDS = new Set<ArtifactKind>([
+  "chart",
+  "dashboard",
+  "file-preview",
+  "advisory-brief",
+]);
+
+function previewMaxWidth(kind: ArtifactKind): string {
+  return WIDE_INSIGHT_KINDS.has(kind) ? "max-w-[600px]" : "max-w-[450px]";
+}
+
 export function DocumentPreview({
   isReadonly: _isReadonly,
   result,
@@ -58,6 +79,8 @@ export function DocumentPreview({
 
   const previewDocument = useMemo(() => documents?.[0], [documents]);
   const hitboxRef = useRef<HTMLDivElement>(null);
+  const displayKind =
+    result?.kind ?? args?.kind ?? previewDocument?.kind ?? artifact.kind;
 
   useEffect(() => {
     const boundingBox = hitboxRef.current?.getBoundingClientRect();
@@ -76,11 +99,11 @@ export function DocumentPreview({
   }, [artifact.documentId, setArtifact]);
 
   if (isDocumentsFetching) {
-    const kind = result?.kind ?? args?.kind ?? artifact.kind;
+    const kind = displayKind;
     const title = result?.title ?? args?.title ?? artifact.title;
 
     return (
-      <div className="w-full max-w-[450px]">
+      <div className={cn("w-full", previewMaxWidth(kind))}>
         {title ? (
           <DocumentHeader isStreaming={true} kind={kind} title={title} />
         ) : (
@@ -117,7 +140,12 @@ export function DocumentPreview({
   }
 
   return (
-    <div className="relative w-full max-w-[450px] cursor-pointer">
+    <div
+      className={cn(
+        "relative w-full cursor-pointer",
+        previewMaxWidth(document.kind)
+      )}
+    >
       <HitboxLayer
         hitboxRef={hitboxRef}
         result={result}
@@ -134,7 +162,7 @@ export function DocumentPreview({
 }
 
 const LoadingSkeleton = ({ artifactKind }: { artifactKind: ArtifactKind }) => (
-  <div className="w-full max-w-[450px]">
+  <div className={cn("w-full", previewMaxWidth(artifactKind))}>
     <div className="flex flex-row items-center justify-between gap-2 rounded-t-2xl border border-b-0 border-border/50 px-4 py-3 dark:bg-muted">
       <div className="flex flex-row items-center gap-2.5">
         <div className="size-3.5 animate-pulse rounded bg-muted-foreground/15" />
@@ -142,7 +170,7 @@ const LoadingSkeleton = ({ artifactKind }: { artifactKind: ArtifactKind }) => (
       </div>
       <div className="w-8" />
     </div>
-    {artifactKind === "image" ? (
+    {artifactKind === "image" || artifactKind === "file-preview" ? (
       <div className="overflow-hidden rounded-b-2xl border border-t-0 border-border/50 bg-muted">
         <div className="h-[257px] w-full animate-pulse bg-muted-foreground/10" />
       </div>
@@ -226,15 +254,17 @@ const PureDocumentHeader = ({
           <div className="animate-spin">
             <LoaderIcon size={14} />
           </div>
-        ) : kind === "image" ? (
+        ) : kind === "image" || kind === "file-preview" ? (
           <ImageIcon size={14} />
+        ) : kind === "chart" || kind === "dashboard" ? (
+          <LineChartIcon size={14} />
         ) : kind === "code" ? (
           <CodeIcon size={14} />
         ) : (
           <FileIcon size={14} />
         )}
       </div>
-      <div className="text-sm font-medium">{title}</div>
+      <div className="font-medium text-sm">{title}</div>
     </div>
     <div className="w-8" />
   </div>
@@ -253,17 +283,23 @@ const DocumentHeader = memo(PureDocumentHeader, (prevProps, nextProps) => {
 
 const DocumentContent = ({ document }: { document: Document }) => {
   const { artifact } = useArtifact();
+  const content = document.content ?? "";
 
   const containerClassName = cn(
-    "h-[257px] overflow-hidden rounded-b-2xl border border-t-0 border-border/50 dark:bg-muted",
+    "overflow-hidden rounded-b-2xl border border-t-0 border-border/50 dark:bg-muted",
     {
-      "p-4 sm:px-10 sm:py-10": document.kind === "text",
-      "p-0": document.kind === "code",
+      "h-[257px] p-4 sm:px-10 sm:py-10": document.kind === "text",
+      "h-[257px] p-0": document.kind === "code",
+      "h-[280px] p-0":
+        document.kind === "chart" ||
+        document.kind === "dashboard" ||
+        document.kind === "advisory-brief" ||
+        document.kind === "file-preview",
     }
   );
 
   const commonProps = {
-    content: document.content ?? "",
+    content,
     isCurrentVersion: true,
     currentVersionIndex: 0,
     status: artifact.status,
@@ -273,32 +309,46 @@ const DocumentContent = ({ document }: { document: Document }) => {
 
   const handleSaveContent = () => null;
 
+  const chart = parseChartContent(content);
+  const dashboard = parseDashboardContent(content);
+  const filePreview = parseFilePreviewContent(content);
+
   return (
     <div className={cn(containerClassName, "relative")}>
       {document.kind === "text" ? (
         <Editor {...commonProps} onSaveContent={handleSaveContent} />
       ) : document.kind === "code" ? (
-        <div className="relative flex w-full flex-1">
+        <div className="relative flex h-full w-full flex-1">
           <div className="absolute inset-0">
             <CodeEditor {...commonProps} onSaveContent={handleSaveContent} />
           </div>
         </div>
       ) : document.kind === "sheet" ? (
-        <div className="relative flex size-full flex-1 p-4">
+        <div className="relative flex size-full h-[257px] flex-1 p-4">
           <div className="absolute inset-0">
             <SpreadsheetEditor {...commonProps} />
           </div>
         </div>
       ) : document.kind === "image" ? (
         <ImageEditor
-          content={document.content ?? ""}
+          content={content}
           currentVersionIndex={0}
           isCurrentVersion={true}
           isInline={true}
           status={artifact.status}
           title={document.title}
         />
-      ) : null}
+      ) : document.kind === "chart" && chart ? (
+        <ChartView chart={chart} compact />
+      ) : document.kind === "dashboard" && dashboard ? (
+        <DashboardView dashboard={dashboard} compact />
+      ) : document.kind === "file-preview" && filePreview ? (
+        <FilePreviewView compact preview={filePreview} />
+      ) : document.kind === "advisory-brief" ? (
+        <BriefView content={content} />
+      ) : (
+        <pre className="overflow-auto p-4 font-mono text-xs">{content}</pre>
+      )}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-muted to-transparent dark:from-muted" />
       {document.kind === "code" && (
         <div className="pointer-events-none absolute inset-y-0 right-0 w-12 bg-gradient-to-l from-muted to-transparent dark:from-muted" />

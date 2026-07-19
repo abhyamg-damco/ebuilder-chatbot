@@ -1,0 +1,3 @@
+-- Ivy Insights: chart, dashboard, and file-preview artifact kinds.
+-- Document.kind is stored as varchar; no DDL change required.
+-- Application enum extended in lib/db/schema.ts.

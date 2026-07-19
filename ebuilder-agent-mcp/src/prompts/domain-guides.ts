@@ -32,6 +32,7 @@ Use processPrefix from schema discovery. For approval queues, filter by assignee
 
   aggregate_records: `Server-side aggregation on records from a prior query. Use for top-N, sums, counts, group-by.
 Pass the records array (or full API response with records key) plus operations spec.
+Use groupByMonth + dateField + scaleDivisor for spend-by-month chart data (millions).
 Avoids re-fetching when answering "which project had the most changes" type questions.`,
 
   get_original_budget: `PREFERRED for "original budget", "total budget", "presented budget" questions.
@@ -48,4 +49,8 @@ Returns normalized EvidencePack with citation refs on every record.`,
 Runs deterministic checks (over-billing, duplicates, retainage, math, CO coverage, front-loading, large period).
 Pass pack from assemble tool + tolerances + enabledChecks from the chat session config.
 Returns flags with severity, $ impact, and citations. Advisory only — never auto-approve.`,
+
+  search_documents: `Search e-Builder Documents for invoice PDFs, images, and supporting files.
+Returns fileName, fileId, documentType, and previewPath for createDocument(file-preview).
+Use after resolve_project or with fileNamePattern (LIKE, e.g. %invoice%).`,
 } as const;

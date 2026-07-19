@@ -11,7 +11,7 @@ import { activeSkillsPrompt } from "@/lib/skills/prompts";
 import type { ActiveAgentSkill } from "@/lib/skills/types";
 
 export const artifactsPrompt = `
-Artifacts is a side panel that displays content alongside the conversation. It supports scripts (code), documents (text), and spreadsheets. Changes appear in real-time.
+Artifacts is a side panel that displays content alongside the conversation. It supports scripts (code), documents (text), spreadsheets, charts, dashboards, and file previews. Changes appear in real-time.
 
 CRITICAL RULES (artifact tools ONLY — createDocument, editDocument, updateDocument, requestSuggestions):
 1. Only call ONE artifact tool per response. After calling any create/edit/update tool, STOP. Do not chain artifact tools.
@@ -21,13 +21,13 @@ CRITICAL RULES (artifact tools ONLY — createDocument, editDocument, updateDocu
 - When the user asks to write, create, or generate content (essays, stories, emails, reports)
 - When the user asks to write code, build a script, or implement an algorithm
 - **Invoice Review Advisor:** after evaluate_invoice_checks, use kind \`advisory-brief\` with JSON content (riskRating, flags, passedChecks, recommendation, contractSummary)
-- You MUST specify kind: 'code' for programming, 'text' for writing, 'sheet' for data, 'advisory-brief' for invoice review briefs
+- You MUST specify kind: 'code' for programming, 'text' for writing, 'sheet' for CSV tables, 'chart' for graphs, 'dashboard' for KPI summaries, 'file-preview' for PDF/image, 'advisory-brief' for invoice review briefs
 - Include ALL content in the createDocument call. Do not create then edit.
 
 **When NOT to use \`createDocument\`:**
-- For answering questions, explanations, or conversational responses
+- For simple conversational responses with no structured data
 - For short code snippets or examples shown inline
-- When the user asks "what is", "how does", "explain", etc.
+- When the user asks "what is", "how does", "explain", etc. — unless Ivy Insights rules apply (MCP active) and a chart, table, or dashboard is needed
 
 **Using \`editDocument\` (preferred for targeted changes):**
 - For scripts: fixing bugs, adding/removing lines, renaming variables, adding logs
@@ -74,6 +74,52 @@ You are an autonomous agent, not a single-shot chatbot. For data questions answe
 6. MCP multi-step rules override artifact one-tool rules. Artifact tools still follow their own one-tool limit.
 
 For "what is original budget on {project}": call get_original_budget first, or chain discover_query_schema(Budgets) → resolve_project → query_records.
+`;
+
+/** Ivy Insights — visual artifacts for MCP data answers (general session only). */
+export const ivyInsightsPrompt = `
+## Ivy Insights (ACTIVE — MCP data visualization)
+
+When MCP tools return structured e-Builder data, finish with a **visual artifact** via createDocument. Do NOT paste large tables or charts as markdown in chat.
+
+### Artifact selection
+| User intent | kind | content |
+|-------------|------|---------|
+| Graph, trend, spend by month/year | chart | JSON: chartType, title, xKey, series[], data[], format.divideBy for millions |
+| Bid leveling, line lists, budget rows | sheet | CSV with headers in row 1 |
+| Top N, retainage, KPI summary | dashboard | JSON: title, kpis[], optional table, optional chart |
+| Invoice PDF/image, document preview | file-preview | JSON: title, fileUrl, contentType, metadata |
+| Single number or yes/no | (none) | Short chat text only |
+
+### Workflow
+1. Complete MCP tool chain (schema → resolve → query → aggregate) until data is complete.
+2. Call **one** createDocument with the full JSON or CSV content.
+3. Reply in chat with 1–2 sentences pointing to the insight panel — never repeat the artifact body.
+
+### Chart JSON example (spend in millions)
+\`\`\`json
+{
+  "chartType": "bar",
+  "title": "Program spend by month",
+  "subtitle": "2023–2025, values in millions USD",
+  "xKey": "month",
+  "series": [{ "key": "spend", "label": "Spend ($M)", "color": "sky" }],
+  "data": [{ "month": "2023-01", "spend": 12500000 }],
+  "format": { "divideBy": 1000000, "valueSuffix": "M", "decimals": 1 }
+}
+\`\`\`
+
+### Dashboard JSON example (top vendors)
+\`\`\`json
+{
+  "title": "Top 3 vendors by commitment value",
+  "kpis": [{ "label": "Vendor 1", "value": "$42.3M" }],
+  "table": { "columns": ["Vendor", "Commitment"], "rows": [["Acme", "$42.3M"]] },
+  "footnotes": ["Source: e-Builder Commitments"]
+}
+\`\`\`
+
+MCP multi-step rules override the generic "do not use artifacts for questions" rule when visual output is appropriate.
 `;
 
 /** Autonomous agent behavior when live browser tools are registered. */
@@ -227,6 +273,7 @@ export const systemPrompt = ({
   activeSecrets = [],
   sessionType,
   invoiceReviewConfig,
+  mcpToolsConnected = false,
 }: {
   requestHints: RequestHints;
   supportsTools: boolean;
@@ -240,6 +287,7 @@ export const systemPrompt = ({
   activeSecrets?: ActiveUserSecret[];
   sessionType?: ChatSessionType | null;
   invoiceReviewConfig?: InvoiceReviewConfig | null;
+  mcpToolsConnected?: boolean;
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
   const mcpPrompt =
@@ -270,12 +318,18 @@ export const systemPrompt = ({
     sessionType === "invoice_review" && invoiceReviewConfig
       ? `\n\n${invoiceReviewPrompt(invoiceReviewConfig)}`
       : "";
+  const ivyInsightsPromptBlock =
+    sessionType !== "invoice_review" &&
+    sessionType !== "trimble_automation" &&
+    mcpToolsConnected
+      ? `\n\n${ivyInsightsPrompt}`
+      : "";
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}`;
+    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

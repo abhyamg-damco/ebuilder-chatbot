@@ -102,7 +102,16 @@ export const document = pgTable(
     title: text("title").notNull(),
     content: text("content"),
     kind: varchar("text", {
-      enum: ["text", "code", "image", "sheet", "advisory-brief"],
+      enum: [
+        "text",
+        "code",
+        "image",
+        "sheet",
+        "advisory-brief",
+        "chart",
+        "dashboard",
+        "file-preview",
+      ],
     })
       .notNull()
       .default("text"),

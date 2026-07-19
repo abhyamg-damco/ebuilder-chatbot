@@ -30,4 +30,7 @@ export const QUESTION_RECIPES = `
 | Approved submittals | discover_get_schema(SubmittalItems) → get_records with status filter |
 | Commitments/budgets by GL code | discover_query_schema → query_records filter GL/account code field from schema |
 | Predict finish within budget | query_records(Budgets) + get_records(Forecasts) + query_records(invoices) → reason |
+| Review invoice #{n} on {project} | assemble_invoice_evidence_pack → evaluate_invoice_checks → createDocument(advisory-brief) |
+| Invoice on my desk / help me review | assemble_invoice_evidence_pack (or extract from upload) → evaluate_invoice_checks → advisory brief |
+| Retainage / over-billing on draw | assemble_invoice_evidence_pack → evaluate_invoice_checks |
 `;

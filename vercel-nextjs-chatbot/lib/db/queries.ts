@@ -45,10 +45,15 @@ import {
   userSecret,
   type UserSecret,
   type ChatSessionType,
+  persona,
+  type Persona,
 } from "./schema";
 import { generateHashedPassword, normalizeAuthEmail } from "./utils";
 import type { McpServerScope } from "../mcp/scope";
 import type { AgentSkillScope } from "../skills/scope";
+import type { PersonaScope } from "../personas/scope";
+import type { InvoiceReviewConfig } from "../invoice-review/types";
+import { SEED_PERSONAS } from "../personas/defaults";
 import type { UserSecretScope } from "../secrets/scope";
 import { getDb } from "./client";
 
@@ -73,6 +78,10 @@ function mcpServerScopeWhere(scope: McpServerScope): SQL {
 
 function agentSkillScopeWhere(scope: AgentSkillScope): SQL {
   return eq(agentSkill.userId, scope.userId);
+}
+
+function personaScopeWhere(scope: PersonaScope): SQL {
+  return eq(persona.userId, scope.userId);
 }
 
 function userSecretScopeWhere(scope: UserSecretScope): SQL {
@@ -144,12 +153,14 @@ export async function saveChat({
   title,
   visibility,
   sessionType,
+  invoiceReviewConfig,
 }: {
   id: string;
   userId: string;
   title: string;
   visibility: VisibilityType;
   sessionType?: ChatSessionType | null;
+  invoiceReviewConfig?: InvoiceReviewConfig | null;
 }) {
   try {
     return await useDb().insert(chat).values({
@@ -159,6 +170,7 @@ export async function saveChat({
       title,
       visibility,
       ...(sessionType !== undefined && { sessionType }),
+      ...(invoiceReviewConfig !== undefined && { invoiceReviewConfig }),
     });
   } catch (_error) {
     throw new ChatbotError("bad_request:database", "Failed to save chat");
@@ -998,6 +1010,138 @@ export async function deleteAgentSkill({
       "bad_request:database",
       "Failed to delete agent skill"
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Invoice review personas
+// ---------------------------------------------------------------------------
+
+/** Lists personas for a user, seeding defaults when none exist or new seeds were added. */
+export async function getPersonas({ scope }: { scope: PersonaScope }) {
+  try {
+    const existing = await useDb()
+      .select()
+      .from(persona)
+      .where(personaScopeWhere(scope))
+      .orderBy(desc(persona.createdAt));
+
+    const existingSlugs = new Set(existing.map((row) => row.slug));
+    const missingSeeds = SEED_PERSONAS.filter(
+      (seed) => !existingSlugs.has(seed.slug)
+    );
+
+    if (existing.length === 0 || missingSeeds.length > 0) {
+      await useDb().insert(persona).values(
+        (existing.length === 0 ? SEED_PERSONAS : missingSeeds).map((seed) => ({
+          userId: scope.userId,
+          name: seed.name,
+          slug: seed.slug,
+          description: seed.description ?? null,
+          instructions: seed.instructions,
+          defaultTolerances: seed.defaultTolerances,
+          defaultEnabledChecks: seed.defaultEnabledChecks,
+          enabled: seed.enabled ?? true,
+          updatedAt: new Date(),
+        }))
+      );
+    }
+
+    return await useDb()
+      .select()
+      .from(persona)
+      .where(personaScopeWhere(scope))
+      .orderBy(desc(persona.createdAt));
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get personas");
+  }
+}
+
+/** Returns a single persona by id for the user. */
+export async function getPersonaById({
+  id,
+  scope,
+}: {
+  id: string;
+  scope: PersonaScope;
+}) {
+  try {
+    const [row] = await useDb()
+      .select()
+      .from(persona)
+      .where(and(eq(persona.id, id), personaScopeWhere(scope)))
+      .limit(1);
+
+    return row ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to get persona by id");
+  }
+}
+
+/** Creates a persona for the user. */
+export async function createPersona({
+  scope,
+  data,
+}: {
+  scope: PersonaScope;
+  data: Omit<Persona, "id" | "userId" | "createdAt" | "updatedAt">;
+}) {
+  try {
+    const [created] = await useDb()
+      .insert(persona)
+      .values({
+        userId: scope.userId,
+        ...data,
+        updatedAt: new Date(),
+      })
+      .returning();
+
+    return created;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to create persona");
+  }
+}
+
+/** Updates a persona owned by the user. */
+export async function updatePersona({
+  id,
+  scope,
+  data,
+}: {
+  id: string;
+  scope: PersonaScope;
+  data: Partial<Omit<Persona, "id" | "userId" | "createdAt" | "updatedAt">>;
+}) {
+  try {
+    const [updated] = await useDb()
+      .update(persona)
+      .set({ ...data, updatedAt: new Date() })
+      .where(and(eq(persona.id, id), personaScopeWhere(scope)))
+      .returning();
+
+    return updated ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to update persona");
+  }
+}
+
+/** Deletes a persona owned by the user. */
+export async function deletePersona({
+  id,
+  scope,
+}: {
+  id: string;
+  scope: PersonaScope;
+}) {
+  try {
+    const [deleted] = await useDb()
+      .delete(persona)
+      .where(and(eq(persona.id, id), personaScopeWhere(scope)))
+      .returning();
+
+    return deleted ?? null;
+  } catch (_error) {
+    throw new ChatbotError("bad_request:database", "Failed to delete persona");
   }
 }
 

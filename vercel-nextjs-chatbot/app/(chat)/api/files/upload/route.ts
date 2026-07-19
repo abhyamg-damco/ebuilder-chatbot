@@ -34,7 +34,7 @@ import { generateUUID } from "@/lib/utils";
 const chatIdSchema = z.string().uuid();
 const visibilitySchema = z.enum(["public", "private"]).optional();
 const sessionTypeSchema = z
-  .enum(["general", "trimble_automation"])
+  .enum(["general", "trimble_automation", "invoice_review"])
   .optional();
 
 /**
@@ -49,7 +49,7 @@ async function ensureChatForUpload({
   chatId: string;
   userId: string;
   visibility?: "public" | "private";
-  sessionType?: "general" | "trimble_automation";
+  sessionType?: "general" | "trimble_automation" | "invoice_review";
 }) {
   const existing = await getChatById({ id: chatId });
 

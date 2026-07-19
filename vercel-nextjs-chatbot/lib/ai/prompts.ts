@@ -3,6 +3,8 @@ import type { ArtifactKind } from "@/components/chat/artifact";
 import { chatUploadsPrompt } from "@/lib/ai/prompts-uploads";
 import type { UploadAccessInfo } from "@/lib/chat/uploads";
 import type { ChatSessionType } from "@/lib/db/schema";
+import { invoiceReviewPrompt } from "@/lib/invoice-review/prompts";
+import type { InvoiceReviewConfig } from "@/lib/invoice-review/types";
 import { activeSecretsPrompt } from "@/lib/secrets/prompts";
 import type { ActiveUserSecret } from "@/lib/secrets/types";
 import { activeSkillsPrompt } from "@/lib/skills/prompts";
@@ -18,7 +20,8 @@ CRITICAL RULES (artifact tools ONLY — createDocument, editDocument, updateDocu
 **When to use \`createDocument\`:**
 - When the user asks to write, create, or generate content (essays, stories, emails, reports)
 - When the user asks to write code, build a script, or implement an algorithm
-- You MUST specify kind: 'code' for programming, 'text' for writing, 'sheet' for data
+- **Invoice Review Advisor:** after evaluate_invoice_checks, use kind \`advisory-brief\` with JSON content (riskRating, flags, passedChecks, recommendation, contractSummary)
+- You MUST specify kind: 'code' for programming, 'text' for writing, 'sheet' for data, 'advisory-brief' for invoice review briefs
 - Include ALL content in the createDocument call. Do not create then edit.
 
 **When NOT to use \`createDocument\`:**
@@ -223,6 +226,7 @@ export const systemPrompt = ({
   activeSkills = [],
   activeSecrets = [],
   sessionType,
+  invoiceReviewConfig,
 }: {
   requestHints: RequestHints;
   supportsTools: boolean;
@@ -235,6 +239,7 @@ export const systemPrompt = ({
   activeSkills?: ActiveAgentSkill[];
   activeSecrets?: ActiveUserSecret[];
   sessionType?: ChatSessionType | null;
+  invoiceReviewConfig?: InvoiceReviewConfig | null;
 }) => {
   const requestPrompt = getRequestPromptFromHints(requestHints);
   const mcpPrompt =
@@ -261,12 +266,16 @@ export const systemPrompt = ({
       : "";
   const uploadsPrompt =
     chatUploads.length > 0 ? `\n\n${chatUploadsPrompt(chatUploads)}` : "";
+  const invoiceAdvisorPrompt =
+    sessionType === "invoice_review" && invoiceReviewConfig
+      ? `\n\n${invoiceReviewPrompt(invoiceReviewConfig)}`
+      : "";
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}`;
+    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

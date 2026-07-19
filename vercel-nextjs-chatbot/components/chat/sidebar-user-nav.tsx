@@ -2,6 +2,7 @@
 
 import {
   ChevronUp,
+  FileCheckIcon,
   KeyRound,
   PlugIcon,
   SettingsIcon,
@@ -119,6 +120,16 @@ export function SidebarUserNav({ user }: { user: User }) {
               >
                 <SparklesIcon className="mr-2 size-3.5" />
                 Agent skills
+              </DropdownMenuItem>
+            ) : null}
+            {!isGuest ? (
+              <DropdownMenuItem
+                className="cursor-pointer text-[13px]"
+                data-testid="user-nav-item-personas-settings"
+                onSelect={() => router.push("/settings/personas")}
+              >
+                <FileCheckIcon className="mr-2 size-3.5" />
+                Review personas
               </DropdownMenuItem>
             ) : null}
             {!isGuest ? (

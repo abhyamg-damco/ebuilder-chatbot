@@ -37,6 +37,10 @@ import { DataStreamHandler } from "./data-stream-handler";
 import { submitEditedMessage } from "./message-editor";
 import { Messages } from "./messages";
 import { MultimodalInput } from "./multimodal-input";
+import {
+  buildInvoiceReviewKickoffText,
+  InvoiceReviewSetupForm,
+} from "./invoice-review-setup-form";
 import { SessionTypePicker } from "./session-type-picker";
 import {
   buildTrimbleKickoffText,
@@ -69,6 +73,9 @@ export function ChatShell() {
     setSessionType,
     trimbleSetupComplete,
     setTrimbleSetupComplete,
+    invoiceReviewSetupComplete,
+    setInvoiceReviewSetupComplete,
+    setInvoiceReviewConfig,
     showSessionPicker,
   } = useActiveChat();
 
@@ -140,7 +147,10 @@ export function ChatShell() {
   /** Hide normal greeting/composer while picking mode or filling Trimble form. */
   const showTrimbleSetup =
     sessionType === "trimble_automation" && !trimbleSetupComplete;
-  const gateComposer = showSessionPicker || showTrimbleSetup;
+  const showInvoiceReviewSetup =
+    sessionType === "invoice_review" && !invoiceReviewSetupComplete;
+  const gateComposer =
+    showSessionPicker || showTrimbleSetup || showInvoiceReviewSetup;
 
   return (
     <>
@@ -175,7 +185,7 @@ export function ChatShell() {
               <div className="flex flex-1 items-center justify-center overflow-y-auto py-8">
                 {showSessionPicker ? (
                   <SessionTypePicker onSelect={setSessionType} />
-                ) : (
+                ) : showTrimbleSetup ? (
                   <TrimbleSetupForm
                     attachments={attachments}
                     chatId={chatId}
@@ -215,6 +225,30 @@ export function ChatShell() {
                     }}
                     setAttachments={setAttachments}
                     visibilityType={visibilityType}
+                  />
+                ) : (
+                  <InvoiceReviewSetupForm
+                    onProceed={async (config) => {
+                      setInvoiceReviewConfig(config);
+                      setInvoiceReviewSetupComplete(true);
+
+                      window.history.pushState(
+                        {},
+                        "",
+                        `${process.env.NEXT_PUBLIC_BASE_PATH ?? ""}/chat/${chatId}`
+                      );
+
+                      await sendMessage({
+                        id: generateUUID(),
+                        role: "user",
+                        parts: [
+                          {
+                            type: "text",
+                            text: buildInvoiceReviewKickoffText(),
+                          },
+                        ],
+                      });
+                    }}
                   />
                 )}
               </div>

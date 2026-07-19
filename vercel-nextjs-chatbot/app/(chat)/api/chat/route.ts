@@ -373,6 +373,7 @@ export async function POST(request: Request) {
             activeSecrets,
             sessionType: effectiveSessionType,
             invoiceReviewConfig: effectiveInvoiceReviewConfig,
+            mcpToolsConnected: mcpBundle.toolNames.length > 0,
           }),
           messages: modelMessages,
           stopWhen: stepCountIs(

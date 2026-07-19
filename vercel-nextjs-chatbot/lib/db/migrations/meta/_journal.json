@@ -71,6 +71,13 @@
       "when": 1757000000000,
       "tag": "0010_invoice_review_advisor",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1758000000000,
+      "tag": "0011_ivy_insight_artifacts",
+      "breakpoints": true
     }
   ]
 }

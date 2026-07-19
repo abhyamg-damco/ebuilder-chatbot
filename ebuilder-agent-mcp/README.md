@@ -12,7 +12,7 @@ Domain-orchestration MCP server for **Trimble Unity Construct (e-Builder)** APIs
 ## What it does
 
 - Authenticates to e-Builder (password grant or bearer token)
-- Registers **10 MCP tools** for query/GET/process workflows
+- Registers **13 MCP tools** for query/GET/process workflows and invoice review
 - Injects **server instructions** + **question recipes** into the MCP `initialize` payload so the host agent keeps calling tools until the answer is complete
 - Runs as **stdio** (local) or **Streamable HTTP** (Docker / remote)
 
@@ -30,6 +30,9 @@ Domain-orchestration MCP server for **Trimble Unity Construct (e-Builder)** APIs
 | `query_processes` | Workflow queries (invoice approvals, bids, CO processes) |
 | `get_original_budget` | Orchestrated: project search → Budgets schema → budget query |
 | `aggregate_records` | Local top-N / sum / count / group-by on prior results |
+| `assemble_invoice_evidence_pack` | Invoice review evidence pack orchestrator |
+| `evaluate_invoice_checks` | Deterministic invoice review checks |
+| `search_documents` | Find invoice PDFs/images for file-preview artifacts |
 
 ### Query resources
 

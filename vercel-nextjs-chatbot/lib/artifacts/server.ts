@@ -2,6 +2,9 @@ import type { UIMessageStreamWriter } from "ai";
 import type { Session } from "next-auth";
 import { codeDocumentHandler } from "@/artifacts/code/server";
 import { advisoryBriefDocumentHandler } from "@/artifacts/advisory-brief/server";
+import { chartDocumentHandler } from "@/artifacts/chart/server";
+import { dashboardDocumentHandler } from "@/artifacts/dashboard/server";
+import { filePreviewDocumentHandler } from "@/artifacts/file-preview/server";
 import { sheetDocumentHandler } from "@/artifacts/sheet/server";
 import { textDocumentHandler } from "@/artifacts/text/server";
 import type { ArtifactKind } from "@/components/chat/artifact";
@@ -98,6 +101,9 @@ export const documentHandlersByArtifactKind: DocumentHandler[] = [
   codeDocumentHandler,
   sheetDocumentHandler,
   advisoryBriefDocumentHandler,
+  chartDocumentHandler,
+  dashboardDocumentHandler,
+  filePreviewDocumentHandler,
 ];
 
 export const artifactKinds = [
@@ -105,4 +111,7 @@ export const artifactKinds = [
   "code",
   "sheet",
   "advisory-brief",
+  "chart",
+  "dashboard",
+  "file-preview",
 ] as const;

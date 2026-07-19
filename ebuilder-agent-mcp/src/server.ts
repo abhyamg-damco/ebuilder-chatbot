@@ -18,6 +18,7 @@ import { registerAggregateRecordsTool } from "./tools/aggregate-records.js";
 import { registerGetOriginalBudgetTool } from "./tools/get-original-budget.js";
 import { registerAssembleInvoiceEvidencePackTool } from "./tools/assemble-invoice-evidence-pack.js";
 import { registerEvaluateInvoiceChecksTool } from "./tools/evaluate-invoice-checks.js";
+import { registerSearchDocumentsTool } from "./tools/search-documents.js";
 
 /** Create and configure the e-Builder Construct MCP server with all tools. */
 export function createEBuilderMcpServer(config: AppConfig): McpServer {
@@ -41,6 +42,7 @@ export function createEBuilderMcpServer(config: AppConfig): McpServer {
   registerAggregateRecordsTool(server);
   registerAssembleInvoiceEvidencePackTool(server, client);
   registerEvaluateInvoiceChecksTool(server);
+  registerSearchDocumentsTool(server, client);
 
   return server;
 }

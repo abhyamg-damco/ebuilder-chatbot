@@ -14,7 +14,10 @@ import {
 import useSWR, { useSWRConfig } from "swr";
 import { useWindowSize } from "usehooks-ts";
 import { advisoryBriefArtifact } from "@/artifacts/advisory-brief/client";
+import { chartArtifact } from "@/artifacts/chart/client";
 import { codeArtifact } from "@/artifacts/code/client";
+import { dashboardArtifact } from "@/artifacts/dashboard/client";
+import { filePreviewArtifact } from "@/artifacts/file-preview/client";
 import { imageArtifact } from "@/artifacts/image/client";
 import { sheetArtifact } from "@/artifacts/sheet/client";
 import { textArtifact } from "@/artifacts/text/client";
@@ -36,6 +39,9 @@ export const artifactDefinitions = [
   imageArtifact,
   sheetArtifact,
   advisoryBriefArtifact,
+  chartArtifact,
+  dashboardArtifact,
+  filePreviewArtifact,
 ];
 export type ArtifactKind = (typeof artifactDefinitions)[number]["kind"];
 

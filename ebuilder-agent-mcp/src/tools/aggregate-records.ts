@@ -29,6 +29,19 @@ const aggregateSpecSchema = z.object({
     .optional()
     .describe("Return only top N groups after sorting"),
   sortBy: sortSpecSchema.optional().describe("Sort aggregated results"),
+  groupByMonth: z
+    .boolean()
+    .optional()
+    .describe("Group by YYYY-MM from dateField (for spend-by-month charts)"),
+  dateField: z
+    .string()
+    .optional()
+    .describe("Date field path when groupByMonth is true"),
+  scaleDivisor: z
+    .number()
+    .positive()
+    .optional()
+    .describe("Divide sum values by this (e.g. 1000000 for millions)"),
 });
 
 type JsonRecord = Record<string, unknown>;
@@ -60,6 +73,30 @@ function toNumber(value: unknown): number {
     return Number.isFinite(parsed) ? parsed : 0;
   }
   return 0;
+}
+
+function toMonthKey(value: unknown): string {
+  if (value === null || value === undefined) {
+    return "(empty)";
+  }
+  const text = String(value);
+  const parsed = Date.parse(text);
+  if (Number.isFinite(parsed)) {
+    const date = new Date(parsed);
+    const month = String(date.getUTCMonth() + 1).padStart(2, "0");
+    return `${date.getUTCFullYear()}-${month}`;
+  }
+  if (/^\d{4}-\d{2}/.test(text)) {
+    return text.slice(0, 7);
+  }
+  return text.slice(0, 7) || "(empty)";
+}
+
+function applyScale(value: number, scaleDivisor?: number): number {
+  if (!scaleDivisor || scaleDivisor <= 0) {
+    return value;
+  }
+  return value / scaleDivisor;
 }
 
 function normalizeRecords(input: unknown): JsonRecord[] {
@@ -108,15 +145,20 @@ export function registerAggregateRecordsTool(server: ToolRegistrar): void {
           });
         }
 
-        if (!spec.groupBy) {
+        if (!spec.groupBy && !spec.groupByMonth) {
           const result: JsonRecord = {
             count: records.length,
           };
           if (spec.sumField) {
-            result.sum = records.reduce(
-              (acc, record) => acc + toNumber(getNestedValue(record, spec.sumField!)),
+            const rawSum = records.reduce(
+              (acc, record) =>
+                acc + toNumber(getNestedValue(record, spec.sumField!)),
               0
             );
+            result.sum = applyScale(rawSum, spec.scaleDivisor);
+            if (spec.scaleDivisor) {
+              result.rawSum = rawSum;
+            }
           }
           return toToolResult({
             totalInputRecords: records.length,
@@ -124,11 +166,26 @@ export function registerAggregateRecordsTool(server: ToolRegistrar): void {
           });
         }
 
-        const groups = new Map<string, { count: number; sum: number; sample: JsonRecord }>();
+        const groups = new Map<
+          string,
+          { count: number; sum: number; sample: JsonRecord }
+        >();
 
         for (const record of records) {
-          const keyValue = getNestedValue(record, spec.groupBy);
-          const key = keyValue === undefined || keyValue === null ? "(empty)" : String(keyValue);
+          let key: string;
+          if (spec.groupByMonth) {
+            const dateField =
+              spec.dateField ??
+              spec.groupBy ??
+              "CommitmentInvoice/DateCreated";
+            key = toMonthKey(getNestedValue(record, dateField));
+          } else {
+            const keyValue = getNestedValue(record, spec.groupBy!);
+            key =
+              keyValue === undefined || keyValue === null
+                ? "(empty)"
+                : String(keyValue);
+          }
           const existing = groups.get(key) ?? { count: 0, sum: 0, sample: record };
           existing.count += 1;
           if (spec.sumField) {
@@ -139,12 +196,20 @@ export function registerAggregateRecordsTool(server: ToolRegistrar): void {
 
         let results = Array.from(groups.entries()).map(([key, value]) => ({
           group: key,
+          month: spec.groupByMonth ? key : undefined,
           count: value.count,
-          ...(spec.sumField ? { sum: value.sum } : {}),
+          ...(spec.sumField
+            ? {
+                sum: applyScale(value.sum, spec.scaleDivisor),
+                ...(spec.scaleDivisor ? { rawSum: value.sum } : {}),
+              }
+            : {}),
           sampleRecord: value.sample,
         }));
 
-        if (spec.sortBy) {
+        if (spec.groupByMonth) {
+          results.sort((a, b) => String(a.group).localeCompare(String(b.group)));
+        } else if (spec.sortBy) {
           const { field, direction } = spec.sortBy;
           results.sort((a, b) => {
             const aVal = getNestedValue(a as JsonRecord, field) ?? (a as JsonRecord)[field.replace("group", "group")];

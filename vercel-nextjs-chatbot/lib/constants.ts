@@ -96,3 +96,15 @@ export const suggestions = [
   "What are the approved commitments for 93-9016?",
   "What are the current budgets for MRI GL Code 93-9016?"
 ];
+
+/** Curated Ivy demo prompts — shown first in chat suggested actions. */
+export const ivyDemoSuggestions = [
+  "Create a graph of spend by month from 2023 to 2025 (in millions).",
+  "Pull all the bids for the XYZ RFP and summarize them in a leveling table.",
+  "What are my top 3 vendors?",
+  "Which line items are over/under budget on the Tower Project?",
+  "What is the total retainage balance with Moss Associates?",
+  "Show me the image of the latest KOHN invoice.",
+  "Provide the summary of invoices raised in Jan 2023 for Project ABC.",
+  "Give me a list of soft cost vendors for the Tower Project.",
+];

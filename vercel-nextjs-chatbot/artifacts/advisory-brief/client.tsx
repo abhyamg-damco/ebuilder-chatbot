@@ -37,7 +37,7 @@ function severityClass(severity: string): string {
   }
 }
 
-function BriefView({ content }: { content: string }) {
+export function BriefView({ content }: { content: string }) {
   const brief = parseBrief(content);
 
   if (!brief) {

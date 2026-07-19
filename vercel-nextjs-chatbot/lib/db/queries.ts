@@ -478,6 +478,41 @@ export async function getDocumentsById({ id }: { id: string }) {
   }
 }
 
+/** Latest insight artifacts (chart, dashboard, sheet, file-preview) for a user. */
+export async function getInsightDocumentsByUserId({
+  userId,
+}: {
+  userId: string;
+}) {
+  try {
+    const insightKinds = ["chart", "dashboard", "file-preview", "sheet"] as const;
+    const documents = await useDb()
+      .select()
+      .from(document)
+      .where(
+        and(
+          eq(document.userId, userId),
+          inArray(document.kind, [...insightKinds])
+        )
+      )
+      .orderBy(desc(document.createdAt));
+
+    const seen = new Set<string>();
+    return documents.filter((doc) => {
+      if (seen.has(doc.id)) {
+        return false;
+      }
+      seen.add(doc.id);
+      return true;
+    });
+  } catch (_error) {
+    throw new ChatbotError(
+      "bad_request:database",
+      "Failed to get insight documents"
+    );
+  }
+}
+
 export async function getDocumentById({ id }: { id: string }) {
   try {
     const [selectedDocument] = await useDb()

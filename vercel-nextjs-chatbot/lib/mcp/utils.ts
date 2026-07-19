@@ -305,6 +305,47 @@ export function formatToolOutput(output: unknown): FormattedToolOutput {
   if (typeof output === "object") {
     const record = output as Record<string, unknown>;
 
+    if (typeof record.totalInputRecords === "number") {
+      const groupCount =
+        typeof record.groupCount === "number" ? record.groupCount : undefined;
+      const resultCount = Array.isArray(record.results)
+        ? record.results.length
+        : undefined;
+      const summaryParts = [
+        `${record.totalInputRecords} record${record.totalInputRecords === 1 ? "" : "s"} analyzed`,
+      ];
+      if (groupCount !== undefined) {
+        summaryParts.push(`${groupCount} groups`);
+      }
+      if (resultCount !== undefined) {
+        summaryParts.push(`${resultCount} result rows`);
+      }
+      return {
+        summary: summaryParts.join(" · "),
+        items: [],
+        raw,
+      };
+    }
+
+    if (typeof record.count === "number" && Array.isArray(record.documents)) {
+      return {
+        summary: `Found ${record.count} document${record.count === 1 ? "" : "s"}`,
+        items: [],
+        raw,
+      };
+    }
+
+    if (Array.isArray(record.results) && record.results.length > 0) {
+      return {
+        summary: `Aggregated into ${record.results.length} group${record.results.length === 1 ? "" : "s"}`,
+        items: record.results.slice(0, 5).map((item, index) => ({
+          label: `Group ${index + 1}`,
+          value: formatDisplayValue(item),
+        })),
+        raw,
+      };
+    }
+
     // MCP content blocks: { content: [{ type: "text", text: "..." }] }
     if (Array.isArray(record.content)) {
       const textParts = record.content

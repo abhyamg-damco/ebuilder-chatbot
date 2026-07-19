@@ -2,6 +2,7 @@
 
 import {
   ChevronUp,
+  BarChart3Icon,
   FileCheckIcon,
   KeyRound,
   PlugIcon,
@@ -120,6 +121,16 @@ export function SidebarUserNav({ user }: { user: User }) {
               >
                 <SparklesIcon className="mr-2 size-3.5" />
                 Agent skills
+              </DropdownMenuItem>
+            ) : null}
+            {!isGuest ? (
+              <DropdownMenuItem
+                className="cursor-pointer text-[13px]"
+                data-testid="user-nav-item-insights"
+                onSelect={() => router.push("/insights")}
+              >
+                <BarChart3Icon className="mr-2 size-3.5" />
+                Saved insights
               </DropdownMenuItem>
             ) : null}
             {!isGuest ? (

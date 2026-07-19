@@ -14,26 +14,35 @@ type CreateDocumentProps = {
   modelId: string;
 };
 
+const ARTIFACT_KIND_GUIDE = `
+Kind selection (Ivy / e-Builder data):
+- chart: time series or comparisons (spend by month, trends). JSON with chartType, title, xKey, series[], data[], optional format.divideBy for millions.
+- dashboard: KPI summary + optional table/chart (top vendors, retainage totals).
+- sheet: CSV tables (bid leveling, line-item lists, over/under budget rows).
+- file-preview: PDF/image preview. JSON with title, fileUrl, contentType, metadata.
+- advisory-brief: invoice review only (JSON with riskRating, flags, passedChecks, recommendation).
+- text/code: essays and scripts only — not for MCP query results.
+`;
+
 export const createDocument = ({
   session,
   dataStream,
   modelId,
 }: CreateDocumentProps) =>
   tool({
-    description:
-      "Create an artifact. Use 'advisory-brief' for invoice review briefs (pass JSON content). Use 'code' for programming, 'text' for essays, 'sheet' for spreadsheets.",
+    description: `Create a visual artifact in the side panel. ${ARTIFACT_KIND_GUIDE}`,
     inputSchema: z.object({
       title: z.string().describe("The title of the artifact"),
       kind: z
         .enum(artifactKinds)
         .describe(
-          "REQUIRED. 'advisory-brief' for invoice review, 'code' for programming, 'text' for writing, 'sheet' for spreadsheets"
+          "REQUIRED. chart | dashboard | sheet | file-preview for Ivy data; advisory-brief for invoice review; code | text for writing"
         ),
       content: z
         .string()
         .optional()
         .describe(
-          "For advisory-brief: JSON string with riskRating, flags, passedChecks, recommendation, contractSummary"
+          "Full artifact body. For chart/dashboard/file-preview/advisory-brief: valid JSON string with all fields."
         ),
     }),
     execute: async ({ title, kind, content }) => {
@@ -90,7 +99,7 @@ export const createDocument = ({
         content:
           kind === "code"
             ? "A script was created and is now visible to the user."
-            : "A document was created and is now visible to the user.",
+            : "An insight artifact was created and is now visible to the user.",
       };
     },
   });

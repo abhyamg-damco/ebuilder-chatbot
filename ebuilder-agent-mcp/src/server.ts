@@ -3,6 +3,7 @@ import type { AppConfig } from "./config.js";
 import { SERVER_NAME, SERVER_VERSION } from "./config.js";
 import { EBuilderClient } from "./api/client.js";
 import { getServerInstructions } from "./prompts/server-instructions.js";
+import { registerToolPrompts } from "./prompts/register-prompts.js";
 import { registerDiscoverSchemaTools } from "./tools/discover-schema.js";
 import { registerQueryRecordsTool } from "./tools/query-records.js";
 import {
@@ -43,6 +44,7 @@ export function createEBuilderMcpServer(config: AppConfig): McpServer {
   registerAssembleInvoiceEvidencePackTool(server, client);
   registerEvaluateInvoiceChecksTool(server);
   registerSearchDocumentsTool(server, client);
+  registerToolPrompts(server);
 
   return server;
 }

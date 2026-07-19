@@ -79,6 +79,10 @@ Per-tool description text registered on each MCP tool (when to call, example arg
 
 NL pattern → recommended tool sequence (budgets, COs, invoices, retainage, approval queues, submittals, forecasts, etc.). Embedded into server instructions.
 
+### 4. MCP prompts (`register-prompts.ts` + `tool-expressions.ts`)
+
+Each of the 13 tools is registered via `server.registerPrompt()` with Postman-derived API paths and example tool-call JSON. Clients can call `prompts/get` (e.g. `query_records` with `resource=BudgetChanges`) to retrieve call expressions before invoking tools.
+
 ## Project layout
 
 ```

@@ -1,6 +1,7 @@
 import "server-only";
 
 import { generateText } from "ai";
+import { getAiSdkTelemetrySettings } from "@/lib/observability/langfuse";
 import { getToolReasoningModel } from "./providers";
 
 type GenerateToolReasoningInput = {
@@ -8,6 +9,7 @@ type GenerateToolReasoningInput = {
   input: unknown;
   userMessage: string;
   modelReasoning?: string;
+  chatId?: string;
 };
 
 /**
@@ -19,6 +21,7 @@ export async function generateToolReasoningExplanation({
   input,
   userMessage,
   modelReasoning,
+  chatId,
 }: GenerateToolReasoningInput): Promise<string> {
   const { text } = await generateText({
     model: getToolReasoningModel(),
@@ -35,6 +38,11 @@ Assistant's private thinking (if any): ${modelReasoning || "none"}
 
 Write the brief explanation:`,
     maxOutputTokens: 80,
+    experimental_telemetry: getAiSdkTelemetrySettings({
+      functionId: "tool-reasoning",
+      recordInputs: false,
+      ...(chatId ? { metadata: { chatId } } : {}),
+    }),
   });
 
   return text.trim();

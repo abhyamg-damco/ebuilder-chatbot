@@ -6,6 +6,7 @@ import { auth } from "@/app/(auth)/auth";
 import type { VisibilityType } from "@/components/chat/visibility-selector";
 import { titlePrompt } from "@/lib/ai/prompts";
 import { getTitleModel } from "@/lib/ai/providers";
+import { getAiSdkTelemetrySettings } from "@/lib/observability/langfuse";
 import {
   deleteMessagesByChatIdAfterTimestamp,
   getChatById,
@@ -21,13 +22,19 @@ export async function saveChatModelAsCookie(model: string) {
 
 export async function generateTitleFromUserMessage({
   message,
+  chatId,
 }: {
   message: UIMessage;
+  chatId?: string;
 }) {
   const { text } = await generateText({
     model: getTitleModel(),
     system: titlePrompt,
     prompt: getTextFromMessage(message),
+    experimental_telemetry: getAiSdkTelemetrySettings({
+      functionId: "chat-title",
+      ...(chatId ? { metadata: { chatId } } : {}),
+    }),
   });
   return text
     .replace(/^[#*"\s]+/, "")

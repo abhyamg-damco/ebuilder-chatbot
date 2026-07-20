@@ -2,6 +2,7 @@ import { streamText } from "ai";
 import { sheetPrompt, updateDocumentPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocumentHandler } from "@/lib/artifacts/server";
+import { getArtifactTelemetrySettings } from "@/lib/observability/langfuse";
 
 export const sheetDocumentHandler = createDocumentHandler<"sheet">({
   kind: "sheet",
@@ -12,6 +13,7 @@ export const sheetDocumentHandler = createDocumentHandler<"sheet">({
       model: getLanguageModel(modelId),
       system: `${sheetPrompt}\n\nOutput ONLY the raw CSV data. No explanations, no markdown fences.`,
       prompt: title,
+      experimental_telemetry: getArtifactTelemetrySettings("sheet", modelId),
     });
 
     for await (const delta of fullStream) {
@@ -34,6 +36,7 @@ export const sheetDocumentHandler = createDocumentHandler<"sheet">({
       model: getLanguageModel(modelId),
       system: `${updateDocumentPrompt(document.content, "sheet")}\n\nOutput ONLY the raw CSV data. No explanations, no markdown fences.`,
       prompt: description,
+      experimental_telemetry: getArtifactTelemetrySettings("sheet", modelId),
     });
 
     for await (const delta of fullStream) {

@@ -199,16 +199,14 @@ export function parseChartContent(content: string): ChartContent | null {
 export function parseDashboardContent(content: string): DashboardContent | null {
   try {
     const raw = parseInsightJson(content);
-    const record =
-      raw && typeof raw === "object" && !Array.isArray(raw)
-        ? (raw as Record<string, unknown>)
-        : raw;
-
-    if (record && typeof record === "object" && !Array.isArray(record) && record.chart) {
-      return dashboardContentSchema.parse({
-        ...record,
-        chart: normalizeChartPayload(record.chart),
-      });
+    if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+      const record = raw as Record<string, unknown>;
+      if (record.chart !== undefined && record.chart !== null) {
+        return dashboardContentSchema.parse({
+          ...record,
+          chart: normalizeChartPayload(record.chart),
+        });
+      }
     }
 
     const parsed = dashboardContentSchema.safeParse(raw);

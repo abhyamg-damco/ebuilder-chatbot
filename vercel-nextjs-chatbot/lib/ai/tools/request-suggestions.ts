@@ -6,17 +6,20 @@ import type { Suggestion } from "@/lib/db/schema";
 import type { ChatMessage } from "@/lib/types";
 import { generateUUID } from "@/lib/utils";
 import { getLanguageModel } from "../providers";
+import { getAiSdkTelemetrySettings } from "@/lib/observability/langfuse";
 
 type RequestSuggestionsProps = {
   session: Session;
   dataStream: UIMessageStreamWriter<ChatMessage>;
   modelId: string;
+  chatId?: string;
 };
 
 export const requestSuggestions = ({
   session,
   dataStream,
   modelId,
+  chatId,
 }: RequestSuggestionsProps) =>
   tool({
     description:
@@ -59,6 +62,13 @@ export const requestSuggestions = ({
               .string()
               .describe("The description of the suggestion"),
           }),
+        }),
+        experimental_telemetry: getAiSdkTelemetrySettings({
+          functionId: "request-suggestions",
+          metadata: {
+            modelId,
+            ...(chatId ? { chatId } : {}),
+          },
         }),
       });
 

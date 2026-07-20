@@ -2,6 +2,7 @@ import { streamText } from "ai";
 import { codePrompt, updateDocumentPrompt } from "@/lib/ai/prompts";
 import { getLanguageModel } from "@/lib/ai/providers";
 import { createDocumentHandler } from "@/lib/artifacts/server";
+import { getArtifactTelemetrySettings } from "@/lib/observability/langfuse";
 
 function stripFences(code: string): string {
   return code
@@ -19,6 +20,7 @@ export const codeDocumentHandler = createDocumentHandler<"code">({
       model: getLanguageModel(modelId),
       system: `${codePrompt}\n\nOutput ONLY the code. No explanations, no markdown fences, no wrapping.`,
       prompt: title,
+      experimental_telemetry: getArtifactTelemetrySettings("code", modelId),
     });
 
     for await (const delta of fullStream) {
@@ -41,6 +43,7 @@ export const codeDocumentHandler = createDocumentHandler<"code">({
       model: getLanguageModel(modelId),
       system: `${updateDocumentPrompt(document.content, "code")}\n\nOutput ONLY the complete updated code. No explanations, no markdown fences, no wrapping.`,
       prompt: description,
+      experimental_telemetry: getArtifactTelemetrySettings("code", modelId),
     });
 
     for await (const delta of fullStream) {

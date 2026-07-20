@@ -70,6 +70,12 @@ See [`../ebuilder-agent-mcp/README.md`](../ebuilder-agent-mcp/README.md) for MCP
 
 Chat models are configured in `lib/ai/models.ts` and call **OpenAI** with `OPENAI_API_KEY`. Default chat model: `gpt-5.2-chat-latest`. Included: GPT-5.5, GPT-5.2 Chat, GPT-4o, GPT-4o Mini, GPT-4 Turbo, o3-mini.
 
+### Langfuse observability
+
+When `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set, the app exports AI SDK traces to Langfuse via OpenTelemetry (`lib/observability/langfuse.ts`). Each sidebar chat maps to one Langfuse **session** (chat UUID); each user message turn is a trace with nested LLM and tool spans.
+
+**Token cost in Langfuse:** add [model definitions](https://langfuse.com/docs/model-usage-and-cost) in your Langfuse project using the same model IDs as `lib/ai/models.ts` (e.g. `gpt-5.2-chat-latest`, `gpt-4o-mini` for titles). Usage is taken from AI SDK span token attributes; no extra pricing logic in the app.
+
 ## Configuration
 
 Copy `.env.example` → `.env.local` (or `.env`) and fill values:
@@ -90,6 +96,9 @@ cp .env.example .env.local
 | `GCS_PROJECT_ID` | Yes | GCP project id |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Local* | SA JSON path for GCS signed URLs |
 | `BROWSERBASE_API_KEY` | No | Enables browser tools + live panel |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | No | Langfuse tracing (active when both are set; set `LANGFUSE_TRACING_ENABLED=false` to disable) |
+| `LANGFUSE_BASE_URL` | No | Langfuse host (default: Langfuse Cloud) |
+| `LANGFUSE_TRACING_ENVIRONMENT` | No | Trace environment label (e.g. `local`, `production`) |
 | `NEXT_PUBLIC_ALLOW_PUBLIC_REGISTRATION` | No | `true` to enable `/register` |
 | `BLOB_READ_WRITE_TOKEN` | No | Legacy Vercel Blob only |
 

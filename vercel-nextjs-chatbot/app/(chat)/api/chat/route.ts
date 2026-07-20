@@ -31,7 +31,12 @@ import { updateDocument } from "@/lib/ai/tools/update-document";
 import { webSearch } from "@/lib/ai/tools/web-search";
 import { isBrowserbaseEnabled } from "@/lib/browserbase/config";
 import { releaseBrowserSession } from "@/lib/browserbase/session-store";
-import { isProductionEnvironment } from "@/lib/constants";
+import {
+  flushLangfuseTraces,
+  getAiSdkTelemetrySettings,
+  isLangfuseTracingEnabled,
+  runWithChatTraceContext,
+} from "@/lib/observability/langfuse";
 import {
   closeMcpClients,
   loadMcpToolsForUser,
@@ -175,8 +180,10 @@ export async function POST(request: Request) {
       });
       effectiveSessionType = requestSessionType ?? "general";
       effectiveInvoiceReviewConfig = invoiceReviewConfig ?? null;
-      titlePromise = generateTitleFromUserMessage({ message });
+      titlePromise = generateTitleFromUserMessage({ message, chatId: id });
     }
+
+    const isNewChat = !chat && message?.role === "user";
 
     let uiMessages: ChatMessage[];
 
@@ -319,9 +326,19 @@ export async function POST(request: Request) {
 
     const activityCollector = createActivityCollector();
 
+    const chatTraceContext = {
+      chatId: id,
+      userId: session.user.id,
+      sessionType: effectiveSessionType,
+      visibility: selectedVisibilityType,
+      isNewChat,
+      chatModel,
+    };
+
     const stream = createUIMessageStream({
       originalMessages: isToolApprovalFlow ? uiMessages : undefined,
-      execute: async ({ writer: dataStream }) => {
+      execute: async ({ writer: dataStream }) =>
+        runWithChatTraceContext(chatTraceContext, async () => {
         const latestUserMessageText = getLatestUserMessageText(uiMessages);
         const mentionedSlugs = parseSkillMentions(latestUserMessageText);
         // Secrets must stay available on OTP / follow-up turns: scan full history,
@@ -404,6 +421,7 @@ export async function POST(request: Request) {
               session,
               dataStream,
               modelId: chatModel,
+              chatId: id,
             }),
             ...(uploadAccessList.length > 0
               ? { getChatUploads: createGetChatUploadsTool(uploadAccessList) }
@@ -459,6 +477,7 @@ export async function POST(request: Request) {
                     input: toolCall.input,
                     userMessage: latestUserMessageText,
                     modelReasoning: reasoningText,
+                    chatId: id,
                   });
 
                   dataStream.write({
@@ -488,10 +507,14 @@ export async function POST(request: Request) {
             }
             await closeMcpClients(mcpBundle.clients);
           },
-          experimental_telemetry: {
-            isEnabled: isProductionEnvironment,
-            functionId: "stream-text",
-          },
+          experimental_telemetry: getAiSdkTelemetrySettings({
+            functionId: "chat-agent",
+            metadata: {
+              chatModel,
+              sessionType: effectiveSessionType ?? "unknown",
+              isNewChat,
+            },
+          }),
         });
 
         dataStream.merge(
@@ -507,7 +530,7 @@ export async function POST(request: Request) {
             /* non-fatal */
           }
         }
-      },
+        }),
       generateId: generateUUID,
       onFinish: async ({ messages: finishedMessages }) => {
         const activityLogPart = buildActivityLogPart(
@@ -590,6 +613,10 @@ export async function POST(request: Request) {
         return "Oops, an error occurred!";
       },
     });
+
+    if (isLangfuseTracingEnabled()) {
+      after(() => flushLangfuseTraces());
+    }
 
     return createUIMessageStreamResponse({
       stream,

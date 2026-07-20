@@ -14,6 +14,8 @@ const nextConfig: NextConfig = {
     "@browserbasehq/stagehand",
     "@browserbasehq/sdk",
     "@google-cloud/storage",
+    "@langfuse/otel",
+    "@langfuse/tracing",
     "@napi-rs/canvas",
     "pdf-parse",
     "pdfjs-dist",

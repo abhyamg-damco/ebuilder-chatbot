@@ -9,14 +9,38 @@ import { logStorageError } from "./logger";
 
 const TEXT_PREVIEW_MAX_CHARS = 8000;
 
+export { TEXT_PREVIEW_MAX_CHARS };
+
 export type ExtractedDocumentText = {
   extractedTextPreview?: string;
   pageCount?: number;
+  /** True when source text exceeded the preview cap. */
+  truncated?: boolean;
+  supported?: boolean;
+  unsupportedReason?: string;
 };
 
 type PdfParseCtor = typeof import("pdf-parse").PDFParse;
 
 let pdfParseCtorPromise: Promise<PdfParseCtor> | undefined;
+let xlsxModulePromise: Promise<typeof import("xlsx")> | undefined;
+
+async function getXlsxModule(): Promise<typeof import("xlsx")> {
+  if (!xlsxModulePromise) {
+    xlsxModulePromise = import("xlsx");
+  }
+  return xlsxModulePromise;
+}
+
+function capText(text: string): { preview: string; truncated: boolean } {
+  if (text.length <= TEXT_PREVIEW_MAX_CHARS) {
+    return { preview: text, truncated: false };
+  }
+  return {
+    preview: text.slice(0, TEXT_PREVIEW_MAX_CHARS),
+    truncated: true,
+  };
+}
 
 /**
  * Lazily loads pdf-parse after installing Node canvas polyfills required by pdfjs-dist.
@@ -48,12 +72,20 @@ export async function extractTextPreview({
   category: UploadCategory;
 }): Promise<ExtractedDocumentText> {
   if (category === "image") {
-    return {};
+    return {
+      supported: false,
+      unsupportedReason:
+        "Image files are available for vision preview only, not text extraction.",
+    };
   }
 
   if (mimeType === "text/plain" || mimeType === "text/csv") {
-    const text = buffer.toString("utf8").slice(0, TEXT_PREVIEW_MAX_CHARS);
-    return { extractedTextPreview: text };
+    const { preview, truncated } = capText(buffer.toString("utf8"));
+    return {
+      extractedTextPreview: preview,
+      truncated,
+      supported: true,
+    };
   }
 
   if (mimeType === "application/pdf") {
@@ -62,34 +94,103 @@ export async function extractTextPreview({
       const parser = new PDFParse({ data: buffer });
       const result = await parser.getText();
       await parser.destroy();
+      const { preview, truncated } = capText(result.text);
       return {
-        extractedTextPreview: result.text.slice(0, TEXT_PREVIEW_MAX_CHARS),
+        extractedTextPreview: preview,
         pageCount: result.total,
+        truncated,
+        supported: true,
       };
     } catch (error) {
       logStorageError("extractTextPreview:pdf", error);
-      return {};
+      return {
+        supported: false,
+        unsupportedReason: "PDF text extraction failed.",
+      };
     }
   }
 
   if (
     mimeType ===
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+    mimeType === "application/msword"
   ) {
     try {
       const result = await mammoth.extractRawText({ buffer });
-      const text = result.value.trim();
+      let text = result.value.trim();
       if (!text) {
-        return {};
+        const htmlResult = await mammoth.convertToHtml({ buffer });
+        text = htmlResult.value
+          .replace(/<[^>]+>/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
       }
+      if (!text) {
+        return {
+          supported: false,
+          unsupportedReason: "Word document contained no extractable text.",
+        };
+      }
+      const { preview, truncated } = capText(text);
       return {
-        extractedTextPreview: text.slice(0, TEXT_PREVIEW_MAX_CHARS),
+        extractedTextPreview: preview,
+        truncated,
+        supported: true,
       };
     } catch (error) {
       logStorageError("extractTextPreview:docx", error);
-      return {};
+      return {
+        supported: false,
+        unsupportedReason: "Word document text extraction failed.",
+      };
     }
   }
 
-  return {};
+  if (
+    mimeType ===
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+    mimeType === "application/vnd.ms-excel"
+  ) {
+    try {
+      const XLSX = await getXlsxModule();
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      const firstSheetName = workbook.SheetNames.at(0);
+      if (!firstSheetName) {
+        return {
+          supported: false,
+          unsupportedReason: "Spreadsheet has no sheets.",
+        };
+      }
+      const sheet = workbook.Sheets[firstSheetName];
+      const csv = XLSX.utils.sheet_to_csv(sheet);
+      const { preview, truncated } = capText(csv.trim());
+      return {
+        extractedTextPreview: preview,
+        truncated,
+        supported: true,
+      };
+    } catch (error) {
+      logStorageError("extractTextPreview:xlsx", error);
+      return {
+        supported: false,
+        unsupportedReason: "Spreadsheet text extraction failed.",
+      };
+    }
+  }
+
+  if (
+    mimeType ===
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+  ) {
+    return {
+      supported: false,
+      unsupportedReason:
+        "PowerPoint text extraction is not supported yet. Use file-preview for visual access.",
+    };
+  }
+
+  return {
+    supported: false,
+    unsupportedReason: `Unsupported document type: ${mimeType}`,
+  };
 }

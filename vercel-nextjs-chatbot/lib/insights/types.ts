@@ -177,7 +177,9 @@ export type DashboardContent = z.infer<typeof dashboardContentSchema>;
 export const filePreviewContentSchema = z.object({
   title: z.string(),
   fileUrl: z.string(),
+  fileId: z.string().optional(),
   contentType: z.string().optional(),
+  previewable: z.boolean().optional(),
   metadata: z.record(z.string(), z.string()).optional(),
 });
 

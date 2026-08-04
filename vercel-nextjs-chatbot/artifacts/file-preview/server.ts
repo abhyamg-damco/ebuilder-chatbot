@@ -1,16 +1,18 @@
 import { createDocumentHandler } from "@/lib/artifacts/server";
+import { sanitizeFilePreviewPayload } from "@/lib/insights/sanitize-file-preview";
 
 /** File preview artifact — PDF or image from e-Builder documents or uploads. */
 export const filePreviewDocumentHandler =
   createDocumentHandler<"file-preview">({
     kind: "file-preview",
     onCreateDocument: async ({ title, content, dataStream }) => {
-      const payload =
+      const raw =
         content ??
         JSON.stringify({
           title,
           fileUrl: "",
         });
+      const payload = sanitizeFilePreviewPayload(raw);
 
       dataStream.write({
         type: "data-filePreviewDelta",
@@ -21,7 +23,8 @@ export const filePreviewDocumentHandler =
       return payload;
     },
     onUpdateDocument: async ({ document, description, dataStream }) => {
-      const payload = `${document.content ?? ""}\n\nUpdate: ${description}`;
+      const raw = `${document.content ?? ""}\n\nUpdate: ${description}`;
+      const payload = sanitizeFilePreviewPayload(raw);
 
       dataStream.write({
         type: "data-filePreviewDelta",

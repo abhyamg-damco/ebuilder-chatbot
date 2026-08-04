@@ -24,6 +24,7 @@ import { createDocument } from "@/lib/ai/tools/create-document";
 import { editDocument } from "@/lib/ai/tools/edit-document";
 import { createBrowserTools } from "@/lib/ai/tools/create-browser-tools";
 import { createGetChatUploadsTool } from "@/lib/ai/tools/get-chat-uploads";
+import { createGetLinkedDocumentsTool } from "@/lib/ai/tools/get-linked-documents";
 import { fetchWebPage } from "@/lib/ai/tools/fetch-web-page";
 import { getWeather } from "@/lib/ai/tools/get-weather";
 import { requestSuggestions } from "@/lib/ai/tools/request-suggestions";
@@ -48,6 +49,14 @@ import {
   refreshFilePartUrls,
   stripNonNativeFileParts,
 } from "@/lib/chat/uploads";
+import {
+  buildLinkedDocumentAccessList,
+  collectLinkedDocumentRefs,
+  prefetchLinkedDocumentsFromToolOutput,
+} from "@/lib/documents/linked-documents";
+import { DOCUMENT_MCP_TOOL_NAMES } from "@/lib/documents/linked-document-refs";
+import { isEBuilderConfigured } from "@/lib/ebuilder/download-url-policy";
+import { denamespaceMcpToolName } from "@/lib/mcp/utils";
 import { isLiveBrowserTool } from "@/lib/chat/browser-tools";
 import {
   buildActivityLogPart,
@@ -97,8 +106,6 @@ function getStreamContext() {
     return null;
   }
 }
-
-export { getStreamContext };
 
 function getLatestUserMessageText(messages: ChatMessage[]): string {
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
@@ -266,6 +273,12 @@ export async function POST(request: Request) {
 
     const chatUploadRecords = await getChatUploadsByChatId({ chatId: id });
     const uploadAccessList = await buildUploadAccessList(chatUploadRecords);
+    const linkedDocumentRefs = collectLinkedDocumentRefs(uiMessages);
+    const linkedDocumentAccessList = await buildLinkedDocumentAccessList({
+      chatId: id,
+      refs: linkedDocumentRefs,
+    });
+    const linkedDocumentsHolder = [...linkedDocumentAccessList];
     const uiMessagesWithUrls = await refreshFilePartUrls({
       messages: uiMessages,
       uploads: uploadAccessList,
@@ -314,12 +327,20 @@ export async function POST(request: Request) {
     const uploadToolNames =
       uploadAccessList.length > 0 ? (["getChatUploads"] as const) : ([] as const);
 
+    const linkedDocumentToolNames =
+      uploadAccessList.length > 0 ||
+      linkedDocumentAccessList.length > 0 ||
+      isEBuilderConfigured()
+        ? (["getLinkedDocuments"] as const)
+        : ([] as const);
+
     const activeToolNames =
       isReasoningModel && !supportsTools
         ? []
         : [
             ...builtInToolNames,
             ...uploadToolNames,
+            ...linkedDocumentToolNames,
             ...browserToolNames,
             ...mcpBundle.toolNames,
           ];
@@ -386,6 +407,7 @@ export async function POST(request: Request) {
             automationIntent: hasAutomationIntent(latestUserMessageText),
             mcpInstructions: mcpBundle.instructions,
             chatUploads: uploadAccessList,
+            linkedDocuments: linkedDocumentsHolder,
             activeSkills,
             activeSecrets,
             sessionType: effectiveSessionType,
@@ -426,6 +448,15 @@ export async function POST(request: Request) {
             ...(uploadAccessList.length > 0
               ? { getChatUploads: createGetChatUploadsTool(uploadAccessList) }
               : {}),
+            ...(linkedDocumentToolNames.length > 0
+              ? {
+                  getLinkedDocuments: createGetLinkedDocumentsTool({
+                    chatId: id,
+                    uploads: uploadAccessList,
+                    linkedDocuments: linkedDocumentsHolder,
+                  }),
+                }
+              : {}),
             ...(browserTools
               ? {
                   webSearch,
@@ -435,13 +466,37 @@ export async function POST(request: Request) {
               : {}),
             ...mcpBundle.tools,
           },
-          onStepFinish: async ({ toolCalls, reasoningText }) => {
+          onStepFinish: async ({ toolCalls, toolResults, reasoningText }) => {
             if (reasoningText?.trim()) {
               emitAgentActivity(dataStream, activityCollector, {
                 message: formatThinkingActivityMessage(reasoningText),
                 status: "active",
                 category: "thinking",
               });
+            }
+
+            if (toolResults.length > 0) {
+              await Promise.all(
+                toolResults.map(async (toolResult) => {
+                  if (!toolResult) {
+                    return;
+                  }
+                  const toolName = denamespaceMcpToolName(toolResult.toolName);
+                  if (!DOCUMENT_MCP_TOOL_NAMES.has(toolName)) {
+                    return;
+                  }
+                  if (
+                    "output" in toolResult &&
+                    toolResult.output !== undefined
+                  ) {
+                    await prefetchLinkedDocumentsFromToolOutput({
+                      chatId: id,
+                      output: toolResult.output,
+                      holder: linkedDocumentsHolder,
+                    });
+                  }
+                })
+              );
             }
 
             if (!toolCalls.length) {

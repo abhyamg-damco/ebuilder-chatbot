@@ -1,7 +1,9 @@
 import type { Geo } from "@vercel/functions";
 import type { ArtifactKind } from "@/components/chat/artifact";
+import { linkedDocumentsPrompt } from "@/lib/ai/prompts-linked-documents";
 import { chatUploadsPrompt } from "@/lib/ai/prompts-uploads";
 import type { UploadAccessInfo } from "@/lib/chat/uploads";
+import type { DocumentAccessInfo } from "@/lib/documents/access";
 import type { ChatSessionType } from "@/lib/db/schema";
 import { invoiceReviewPrompt } from "@/lib/invoice-review/prompts";
 import type { InvoiceReviewConfig } from "@/lib/invoice-review/types";
@@ -88,8 +90,32 @@ When MCP tools return structured e-Builder data, finish with a **visual artifact
 | Graph, trend, spend by month/year | chart | JSON: chartType, title, xKey, series[], data[], format.divideBy for millions |
 | Bid leveling, line lists, budget rows | sheet | CSV with headers in row 1 |
 | Top N, retainage, KPI summary | dashboard | JSON: title, kpis[], optional table, optional chart |
-| Invoice PDF/image, document preview | file-preview | JSON: title, fileUrl, contentType, metadata |
+| Invoice PDF/image, document preview | file-preview | JSON: title, fileUrl, contentType, previewable:true, metadata.fileId + metadata.fileName |
 | Single number or yes/no | (none) | Short chat text only |
+
+**Document preview (CRITICAL):** Call \`get_invoice_document\` or \`search_documents\` first. Copy **only** values from the tool response (\`bestMatch\` / document record) — NEVER use UUIDs or filenames from this prompt.
+
+- \`fileUrl\` = MCP \`bestMatch.fileUrl\` or \`downloadUrl\` (must be a real \`https://\` signed S3 URL)
+- \`fileId\` = MCP \`bestMatch.fileId\` (root and \`metadata.fileId\`)
+- \`metadata.fileName\` = MCP \`bestMatch.fileName\`
+- Do NOT use \`/api/documents/render\` as \`fileUrl\`; the UI builds the render URL from \`fileId\`
+
+**Document content Q&A:** When the user asks what a document **contains** (line items, totals, dates, vendor info), use extracted text from **Linked e-Builder documents** in the system prompt, or call \`getLinkedDocuments\` with \`fileId\` / \`downloadUrl\` from the latest MCP result. Do not claim you cannot access the file when text is available.
+
+\`\`\`json
+{
+  "title": "<invoice title from context>",
+  "fileUrl": "<bestMatch.fileUrl from MCP — must start with https://>",
+  "fileId": "<bestMatch.fileId from MCP only>",
+  "contentType": "<bestMatch.contentType from MCP>",
+  "previewable": true,
+  "metadata": {
+    "fileId": "<same bestMatch.fileId>",
+    "fileName": "<bestMatch.fileName from MCP>",
+    "source": "e-Builder Documents"
+  }
+}
+\`\`\`
 
 ### Workflow
 1. Complete MCP tool chain (schema → resolve → query → aggregate) until data is complete.
@@ -269,6 +295,7 @@ export const systemPrompt = ({
   automationIntent = false,
   mcpInstructions = [],
   chatUploads = [],
+  linkedDocuments = [],
   activeSkills = [],
   activeSecrets = [],
   sessionType,
@@ -283,6 +310,7 @@ export const systemPrompt = ({
   automationIntent?: boolean;
   mcpInstructions?: string[];
   chatUploads?: UploadAccessInfo[];
+  linkedDocuments?: DocumentAccessInfo[];
   activeSkills?: ActiveAgentSkill[];
   activeSecrets?: ActiveUserSecret[];
   sessionType?: ChatSessionType | null;
@@ -314,6 +342,10 @@ export const systemPrompt = ({
       : "";
   const uploadsPrompt =
     chatUploads.length > 0 ? `\n\n${chatUploadsPrompt(chatUploads)}` : "";
+  const linkedDocsPrompt =
+    linkedDocuments.length > 0
+      ? `\n\n${linkedDocumentsPrompt(linkedDocuments)}`
+      : "";
   const invoiceAdvisorPrompt =
     sessionType === "invoice_review" && invoiceReviewConfig
       ? `\n\n${invoiceReviewPrompt(invoiceReviewConfig)}`
@@ -326,10 +358,10 @@ export const systemPrompt = ({
       : "";
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}`;
+    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${linkedDocsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${linkedDocsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

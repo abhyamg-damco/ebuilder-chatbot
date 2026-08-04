@@ -5,6 +5,7 @@
 import { loadConfig } from "./config.js";
 import { EBuilderClient } from "./api/client.js";
 import { buildQueryPath, buildQueryParams } from "./api/resources.js";
+import { searchProjects } from "./api/project-search.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -65,6 +66,50 @@ async function main(): Promise<void> {
   );
   const budgetRecords = (budgetData as { records?: unknown[] }).records ?? [];
   console.log(`   OK — ${budgetRecords.length} budget record(s)`);
+
+  const voiceProject = process.env.EBUILDER_SMOKE_PROJECT;
+  if (voiceProject) {
+    console.log(`4. resolve_project voice reference (${voiceProject})...`);
+    const result = await searchProjects(client, voiceProject, 5);
+    console.log(
+      `   OK — ${result.matches.length} match(es); tried: ${result.searchTermsTried.join(", ")}`
+    );
+  }
+
+  console.log("5. query_records (Documents with DownloadURL)...");
+  const documentsPath = buildQueryPath("Documents");
+  const documentsData = await client.post(
+    documentsPath,
+    {
+      SelectedFields: [
+        "Document/FileName",
+        "Document/FileId",
+        "Document/DownloadURL",
+      ],
+      Filters: [
+        {
+          Field: "Document/FileName",
+          Operation: "LIKE",
+          Value: "%invoice%",
+        },
+      ],
+    },
+    buildQueryParams({ schema: false, pageNumber: 0, pageSize: 3 })
+  );
+  const documentRecords =
+    (documentsData as { records?: unknown[] }).records ?? [];
+  const firstDocument = documentRecords[0] as
+    | { Document?: { DownloadURL?: string; FileName?: string } }
+    | undefined;
+  const downloadUrl = firstDocument?.Document?.DownloadURL;
+  if (!downloadUrl) {
+    throw new Error(
+      "Documents query returned no DownloadURL — invoice document retrieval will fail"
+    );
+  }
+  console.log(
+    `   OK — ${documentRecords.length} document(s); sample: ${firstDocument?.Document?.FileName ?? "unknown"}`
+  );
 
   console.log("\nSmoke test passed.");
 }

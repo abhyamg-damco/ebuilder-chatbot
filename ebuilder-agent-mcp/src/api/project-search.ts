@@ -1,18 +1,29 @@
 import type { EBuilderClient } from "./client.js";
 import { buildQueryParams, buildQueryPath } from "./resources.js";
 
+export type ProjectMatchConfidence = "exact" | "strong" | "partial";
+
 export interface ProjectMatch {
   projectName?: string;
   portalId?: string;
   urlSafeName?: string;
   status?: string;
   customFields?: Record<string, unknown>;
+  /** The e-Builder field that returned this project. */
   matchedBy: string;
+  /** The search variant that returned this project. */
+  matchedSearchTerm: string;
+  /** Confidence derived from normalized values in the returned record. */
+  matchConfidence: ProjectMatchConfidence;
   raw: unknown;
 }
 
 export interface ProjectSearchResult {
   searchTerm: string;
+  /** Canonical, punctuation-insensitive form used to compare project references. */
+  normalizedSearchTerm: string;
+  /** Original and normalized terms tried against e-Builder. */
+  searchTermsTried: string[];
   strategiesAttempted: string[];
   matches: ProjectMatch[];
   suggestedFilters: Array<{
@@ -32,10 +43,102 @@ const DEFAULT_SELECTED_FIELDS = [
   "Project/CustomFields/MASTER PROJECT NUMBER",
 ];
 
-/** Build a LIKE filter pattern for fuzzy matching. */
+const VOICE_DIGITS: Record<string, string> = {
+  zero: "0",
+  one: "1",
+  two: "2",
+  three: "3",
+  four: "4",
+  five: "5",
+  six: "6",
+  seven: "7",
+  eight: "8",
+  nine: "9",
+};
+
+/** Build a LIKE filter pattern for fuzzy name matching. */
 function likePattern(term: string): string {
   const trimmed = term.trim();
   return trimmed.includes("%") ? trimmed : `%${trimmed}%`;
+}
+
+/** Remove transcription punctuation and normalize voice-spelled single digits. */
+function normalizeVoiceWords(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[‐‑‒–—―]/g, "-")
+    .toLowerCase()
+    .replace(/\b(zero|one|two|three|four|five|six|seven|eight|nine)\b/g, (word) =>
+      VOICE_DIGITS[word] ?? word
+    )
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+/** Comparable representation for codes, names, and custom-field values. */
+export function normalizeProjectReference(value: string): string {
+  return normalizeVoiceWords(value).replace(/\s+/g, "").toUpperCase();
+}
+
+/** Extract a likely project reference when a host sends a whole spoken utterance. */
+function extractProjectReference(value: string): string | undefined {
+  const trimmed = value.trim().replace(/[?!.]+$/, "");
+  const accessMatch = trimmed.match(/\baccess\s+to\s+(?:the\s+)?(.+)$/i);
+  const explicitProjectMatch = trimmed.match(
+    /\bproject(?:\s+(?:number|code|id|name))?\s+(?:is\s+|called\s+)?(.+)$/i
+  );
+  const candidate = accessMatch?.[1] ?? explicitProjectMatch?.[1];
+  if (!candidate) return undefined;
+
+  const reference = candidate
+    .replace(/\b(?:please|thanks?)\b.*$/i, "")
+    .replace(/\s+project$/i, "")
+    .trim();
+  return reference || undefined;
+}
+
+/**
+ * Build a small, deterministic set of useful e-Builder search terms from a
+ * raw voice transcript. For example, "E. SRI 00. 6A" becomes ESRI006A,
+ * "ESRI 006A", and "ESRI-006A" while preserving the original input.
+ */
+export function buildProjectSearchVariants(searchTerm: string): string[] {
+  const original = searchTerm.trim().replace(/\s+/g, " ");
+  const normalizedWords = normalizeVoiceWords(original);
+  const compact = normalizeProjectReference(original);
+  const variants: string[] = [];
+
+  const add = (value: string) => {
+    const candidate = value.trim().replace(/\s+/g, " ");
+    if (candidate && !variants.some((existing) => existing.toUpperCase() === candidate.toUpperCase())) {
+      variants.push(candidate);
+    }
+  };
+
+  add(original);
+  add(normalizedWords);
+
+  const extractedReference = extractProjectReference(original);
+  const extractedCompact = extractedReference
+    ? normalizeProjectReference(extractedReference)
+    : compact;
+
+  // Project-code shape: letters followed by a numeric code with an optional suffix.
+  // Prioritize code forms so a complete voice utterance still probes each one.
+  const code = extractedCompact.match(/^([A-Z]{2,})(\d+[A-Z]?)$/);
+  if (code) {
+    const [, prefix, suffix] = code;
+    add(`${prefix} ${suffix}`);
+    add(`${prefix}-${suffix}`);
+    add(`${prefix}${suffix}`);
+  } else if (extractedReference) {
+    add(extractedReference);
+    add(normalizeVoiceWords(extractedReference));
+  }
+
+  return variants.slice(0, 5);
 }
 
 function extractRecords(data: unknown): unknown[] {
@@ -46,12 +149,49 @@ function extractRecords(data: unknown): unknown[] {
   return Array.isArray(records) ? records : [];
 }
 
-function normalizeMatch(record: unknown, matchedBy: string): ProjectMatch | null {
+function readPath(record: Record<string, unknown>, path: string): unknown {
+  return path.split("/").reduce<unknown>((value, segment) => {
+    if (!value || typeof value !== "object") {
+      return undefined;
+    }
+    return (value as Record<string, unknown>)[segment];
+  }, record);
+}
+
+function confidenceFor(
+  record: Record<string, unknown>,
+  field: string,
+  searchTerm: string
+): ProjectMatchConfidence {
+  const target = normalizeProjectReference(searchTerm);
+  if (!target) {
+    return "partial";
+  }
+
+  const value = readPath(record, field);
+  if (typeof value === "string") {
+    const normalizedValue = normalizeProjectReference(value);
+    if (normalizedValue === target) {
+      return "exact";
+    }
+    if (normalizedValue.includes(target) || target.includes(normalizedValue)) {
+      return "strong";
+    }
+  }
+  return "partial";
+}
+
+function normalizeMatch(
+  record: unknown,
+  matchedBy: string,
+  matchedSearchTerm: string
+): ProjectMatch | null {
   if (!record || typeof record !== "object") {
     return null;
   }
 
-  const project = (record as { Project?: Record<string, unknown> }).Project;
+  const typedRecord = record as Record<string, unknown>;
+  const project = typedRecord.Project as Record<string, unknown> | undefined;
   if (!project) {
     return null;
   }
@@ -63,6 +203,8 @@ function normalizeMatch(record: unknown, matchedBy: string): ProjectMatch | null
     status: project.Status as string | undefined,
     customFields: project.CustomFields as Record<string, unknown> | undefined,
     matchedBy,
+    matchedSearchTerm,
+    matchConfidence: confidenceFor(typedRecord, matchedBy, matchedSearchTerm),
     raw: record,
   };
 }
@@ -78,15 +220,13 @@ function extractCustomFieldPaths(schema: unknown): string[] {
 
     if (customFields) {
       for (const key of Object.keys(customFields)) {
-        if (
-          /project\s*id|project\s*number|oracle|master\s*project/i.test(key)
-        ) {
+        if (/project\s*id|project\s*number|oracle|master\s*project/i.test(key)) {
           paths.push(`Project/CustomFields/${key}`);
         }
       }
     }
   } catch {
-    // Schema shape varies; fall back to defaults
+    // Schema shape varies; fall back to defaults.
   }
 
   return paths;
@@ -100,28 +240,29 @@ async function runProjectQuery(
 ): Promise<unknown[]> {
   try {
     const path = buildQueryPath("Projects");
-    const params = buildQueryParams({
-      schema: false,
-      pageNumber: 0,
-      pageSize: maxResults,
-    });
-
-    const data = await client.post(
-      path,
-      { SelectedFields: selectedFields, Filters: filters },
-      params
-    );
-
+    const params = buildQueryParams({ schema: false, pageNumber: 0, pageSize: maxResults });
+    const data = await client.post(path, { SelectedFields: selectedFields, Filters: filters }, params);
     return extractRecords(data);
   } catch {
-    // Some field/operation combos are invalid per tenant schema — skip silently
+    // Some field/operation combinations are invalid per tenant schema — keep searching.
     return [];
   }
 }
 
+function confidenceScore(confidence: ProjectMatchConfidence): number {
+  return { exact: 3, strong: 2, partial: 1 }[confidence];
+}
+
+function fieldScore(field: string): number {
+  if (field.includes("CustomFields")) return 3;
+  if (field.endsWith("UrlSafeName")) return 2;
+  return 1;
+}
+
 /**
- * Multi-strategy project search: name, code, custom fields (e.g. "ESRI 005").
- * Returns matches plus ready-to-use Filters for downstream query_records calls.
+ * Multi-strategy project search for display names, codes, custom IDs, and raw
+ * voice transcripts. It intentionally has no static nickname-to-code mapping:
+ * e-Builder project data remains the source of truth.
  */
 export async function searchProjects(
   client: EBuilderClient,
@@ -129,164 +270,123 @@ export async function searchProjects(
   maxResults = 10
 ): Promise<ProjectSearchResult> {
   const strategiesAttempted: string[] = [];
-  const seen = new Set<string>();
-  const matches: ProjectMatch[] = [];
+  const variants = buildProjectSearchVariants(searchTerm);
+  const term = searchTerm.trim();
+  const seen = new Map<string, ProjectMatch>();
 
-  const addMatches = (records: unknown[], matchedBy: string) => {
+  const addMatches = (records: unknown[], field: string, variant: string) => {
     for (const record of records) {
-      const match = normalizeMatch(record, matchedBy);
+      const match = normalizeMatch(record, field, variant);
       const key = match?.portalId ?? JSON.stringify(record);
-      if (match && !seen.has(key)) {
-        seen.add(key);
-        matches.push(match);
+      if (!match) continue;
+
+      const existing = seen.get(key);
+      if (
+        !existing ||
+        confidenceScore(match.matchConfidence) > confidenceScore(existing.matchConfidence) ||
+        (confidenceScore(match.matchConfidence) === confidenceScore(existing.matchConfidence) &&
+          fieldScore(match.matchedBy) > fieldScore(existing.matchedBy))
+      ) {
+        seen.set(key, match);
       }
     }
   };
 
-  const term = searchTerm.trim();
-  const like = likePattern(term);
+  const searchField = async (field: string, selectedFields: string[]) => {
+    for (const variant of variants) {
+      strategiesAttempted.push(`${field} LIKE (${variant})`);
+      addMatches(
+        await runProjectQuery(
+          client,
+          [{ Field: field, Operation: "LIKE", Value: likePattern(variant) }],
+          selectedFields,
+          maxResults
+        ),
+        field,
+        variant
+      );
+    }
+  };
 
-  // Strategy 1: project display name
-  strategiesAttempted.push("Project/ProjectName LIKE");
-  addMatches(
-    await runProjectQuery(
-      client,
-      [{ Field: "Project/ProjectName", Operation: "LIKE", Value: like }],
-      DEFAULT_SELECTED_FIELDS,
-      maxResults
-    ),
-    "Project/ProjectName"
-  );
+  await searchField("Project/ProjectName", DEFAULT_SELECTED_FIELDS);
+  await searchField("Project/UrlSafeName", DEFAULT_SELECTED_FIELDS);
 
-  // Strategy 2: URL-safe name / code
-  if (matches.length < maxResults) {
-    strategiesAttempted.push("Project/UrlSafeName LIKE");
-    addMatches(
-      await runProjectQuery(
-        client,
-        [{ Field: "Project/UrlSafeName", Operation: "LIKE", Value: like }],
-        DEFAULT_SELECTED_FIELDS,
-        maxResults
-      ),
-      "Project/UrlSafeName"
-    );
-  }
-
-  // Strategy 3: discover tenant custom fields from schema, then search each
   let customFieldPaths: string[] = [];
   try {
-    const schemaPath = buildQueryPath("Projects");
-    const schemaParams = buildQueryParams({
-      schema: true,
-      pageNumber: 0,
-      pageSize: 0,
-    });
-    const schema = await client.post(schemaPath, {}, schemaParams);
+    const schema = await client.post(
+      buildQueryPath("Projects"),
+      {},
+      buildQueryParams({ schema: true, pageNumber: 0, pageSize: 0 })
+    );
     customFieldPaths = extractCustomFieldPaths(schema);
   } catch {
     customFieldPaths = [];
   }
 
-  const fieldsToSearch =
-    customFieldPaths.length > 0
-      ? customFieldPaths
-      : [
-          "Project/CustomFields/Project ID",
-          "Project/CustomFields/Oracle Project Number",
-          "Project/CustomFields/MASTER PROJECT NUMBER",
-        ];
+  const fieldsToSearch = customFieldPaths.length > 0
+    ? customFieldPaths
+    : [
+        "Project/CustomFields/Project ID",
+        "Project/CustomFields/Oracle Project Number",
+        "Project/CustomFields/MASTER PROJECT NUMBER",
+      ];
 
-  for (const fieldPath of fieldsToSearch) {
-    if (matches.length >= maxResults) {
-      break;
-    }
-
-    strategiesAttempted.push(`${fieldPath} LIKE`);
-    addMatches(
-      await runProjectQuery(
-        client,
-        [{ Field: fieldPath, Operation: "LIKE", Value: like }],
-        [...DEFAULT_SELECTED_FIELDS, fieldPath],
-        maxResults
-      ),
-      fieldPath
-    );
-
-    // Also try exact match via LIKE without wildcards (EQ is not supported on all fields)
-    if (!term.includes("%")) {
-      strategiesAttempted.push(`${fieldPath} exact LIKE`);
-      addMatches(
-        await runProjectQuery(
-          client,
-          [{ Field: fieldPath, Operation: "LIKE", Value: term }],
-          [...DEFAULT_SELECTED_FIELDS, fieldPath],
-          maxResults
-        ),
-        `${fieldPath} (exact)`
-      );
-    }
+  for (const field of fieldsToSearch) {
+    await searchField(field, [...DEFAULT_SELECTED_FIELDS, field]);
   }
 
-  // Strategy 4: token split — "ESRI 005" → search each token on custom fields
-  const tokens = term.split(/\s+/).filter((t) => t.length >= 2);
-  if (tokens.length > 1) {
-    for (const token of tokens) {
-      for (const fieldPath of fieldsToSearch) {
-        if (matches.length >= maxResults) {
-          break;
-        }
-        strategiesAttempted.push(`${fieldPath} LIKE token:${token}`);
+  // If a multiword nickname did not match as a phrase, try its meaningful words
+  // against names and project IDs before asking the caller for an official reference.
+  if (seen.size === 0 && variants.length > 0) {
+    const tokens = normalizeVoiceWords(term).split(" ").filter((token) => token.length >= 3);
+    for (const token of tokens.slice(0, 4)) {
+      for (const field of ["Project/ProjectName", ...fieldsToSearch]) {
+        strategiesAttempted.push(`${field} LIKE token (${token})`);
         addMatches(
           await runProjectQuery(
             client,
-            [
-              {
-                Field: fieldPath,
-                Operation: "LIKE",
-                Value: likePattern(token),
-              },
-            ],
-            [...DEFAULT_SELECTED_FIELDS, fieldPath],
+            [{ Field: field, Operation: "LIKE", Value: likePattern(token) }],
+            [...DEFAULT_SELECTED_FIELDS, field],
             maxResults
           ),
-          `${fieldPath} (token: ${token})`
+          field,
+          token
         );
       }
     }
   }
 
-  const suggestedFilters: ProjectSearchResult["suggestedFilters"] = [];
+  const matches = [...seen.values()]
+    .sort((a, b) =>
+      confidenceScore(b.matchConfidence) - confidenceScore(a.matchConfidence) ||
+      fieldScore(b.matchedBy) - fieldScore(a.matchedBy) ||
+      (a.projectName ?? "").localeCompare(b.projectName ?? "")
+    )
+    .slice(0, maxResults);
 
+  const suggestedFilters: ProjectSearchResult["suggestedFilters"] = [];
   if (matches.length > 0) {
     const best = matches[0];
     if (best.portalId) {
-      suggestedFilters.push({
-        Field: "Project/PortalId",
-        Operation: "LIKE",
-        Value: best.portalId,
-      });
+      suggestedFilters.push({ Field: "Project/PortalId", Operation: "LIKE", Value: best.portalId });
     }
     if (best.projectName) {
-      suggestedFilters.push({
-        Field: "Project/ProjectName",
-        Operation: "LIKE",
-        Value: likePattern(best.projectName),
-      });
+      suggestedFilters.push({ Field: "Project/ProjectName", Operation: "LIKE", Value: likePattern(best.projectName) });
     }
   } else {
     for (const fieldPath of fieldsToSearch.slice(0, 3)) {
-      suggestedFilters.push({
-        Field: fieldPath,
-        Operation: "LIKE",
-        Value: like,
-      });
+      for (const variant of variants.slice(0, 2)) {
+        suggestedFilters.push({ Field: fieldPath, Operation: "LIKE", Value: likePattern(variant) });
+      }
     }
   }
 
   return {
     searchTerm: term,
+    normalizedSearchTerm: normalizeProjectReference(term),
+    searchTermsTried: variants,
     strategiesAttempted,
-    matches: matches.slice(0, maxResults),
+    matches,
     suggestedFilters,
   };
 }

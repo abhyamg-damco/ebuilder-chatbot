@@ -25,7 +25,7 @@ Domain-orchestration MCP server for **Trimble Unity Construct (e-Builder)** APIs
 | `query_records` | POST Query with `SelectedFields` + `Filters` + pagination |
 | `get_records` | GET list (`dateModified`, `limit`, `offset`) |
 | `get_record_detail` | GET by id + optional sub-resource (`items`, `changes`, `customfields`, `contacts`, `reviewers`) |
-| `resolve_project` | Fuzzy project match by name/code/custom ID |
+| `resolve_project` | Voice-tolerant project match by name/code/custom ID/nickname |
 | `resolve_company` | Fuzzy vendor/company match (`Companies`) |
 | `query_processes` | Workflow queries (invoice approvals, bids, CO processes) |
 | `get_original_budget` | Orchestrated: project search → Budgets schema → budget query |
@@ -74,6 +74,8 @@ Injected via MCP `instructions` on initialize. Key rules:
 ### 2. Tool guides (`domain-guides.ts`)
 
 Per-tool description text registered on each MCP tool (when to call, example args).
+
+`resolve_project` accepts raw voice references such as `E. SRI 00. 6A`; it normalizes code variants and searches project names, URL-safe names, and tenant project-ID custom fields. It does not maintain a static nickname-to-code mapping.
 
 ### 3. Question recipes (`question-recipes.ts`)
 
@@ -176,6 +178,7 @@ npm run smoke-test
 ```
 
 Exercises Budgets schema, project resolve (`Tower`), and a sample budget query.
+Set `EBUILDER_SMOKE_PROJECT='E. SRI 00. 6A'` to add an optional voice-reference project-resolution check for a tenant that contains a matching project.
 
 ### Other scripts
 

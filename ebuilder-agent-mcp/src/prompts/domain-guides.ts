@@ -19,8 +19,9 @@ Best for Submittals, Forecasts, CashFlows where no Query endpoint exists.`,
   get_record_detail: `GET /api/v2/{Resource}/{id} plus optional subResource: items, changes, customfields, contacts, reviewers.
 Use after resolving record IDs from query results.`,
 
-  resolve_project: `Fuzzy-match project by name or code (e.g. Tower, SG3, T1). Returns matches with IDs for Filters.
-Call before project-scoped budget/commitment/invoice queries.`,
+  resolve_project: `Fuzzy-match a project by name, code, custom ID, descriptive nickname, or raw voice transcript.
+Pass the reference exactly as heard (e.g. Tower, SG3, ESRI-006A, E. SRI 00. 6A, ESRI zero zero six A). The tool normalizes punctuation, spaces, hyphens, and spoken digits, then searches ProjectName, UrlSafeName, and relevant custom ID fields.
+Returns verified matches with IDs for filters plus searchTermsTried and matchConfidence. Call before project-scoped budget/commitment/invoice queries and before saying that a caller has access to a project. If no project is verified after its nextSteps, ask for the official project name or project number; never guess a nickname-to-code mapping.`,
 
   resolve_company: `Fuzzy-match vendor/company by name (e.g. KOHN, FORTUNE, Moss). Returns IDs for Filters.
 Vendors are stored as Companies in e-Builder.`,
@@ -40,9 +41,10 @@ Orchestrates: multi-strategy project search (name + custom fields like Project I
 Pass projectSearchTerm exactly as the user wrote it (e.g. "ESRI 005").
 If status is incomplete/partial, follow nextSteps and agentDirective — do NOT tell user data is missing without trying them.`,
 
-  assemble_invoice_evidence_pack: `Invoice Review Advisor — ALWAYS call first for invoice review requests.
+  assemble_invoice_evidence_pack: `Invoice Review Advisor — call for invoice **analysis/review** requests (not for viewing the PDF).
 Gathers invoice header + line items (/items details), commitment + SOV, last 4-5 prior invoices, change orders, retainage terms, budget context.
 Pass commitmentInvoiceId when known, OR invoiceNumber + projectSearchTerm/commitmentId.
+For viewing/opening the uploaded invoice document, call get_invoice_document instead.
 Returns normalized EvidencePack with citation refs on every record.`,
 
   evaluate_invoice_checks: `Invoice Review Advisor — call AFTER assemble_invoice_evidence_pack.
@@ -51,6 +53,14 @@ Pass pack from assemble tool + tolerances + enabledChecks from the chat session 
 Returns flags with severity, $ impact, and citations. Advisory only — never auto-approve.`,
 
   search_documents: `Search e-Builder Documents for invoice PDFs, images, and supporting files.
-Returns fileName, fileId, documentType, and previewPath for createDocument(file-preview).
-Use after resolve_project or with fileNamePattern (LIKE, e.g. %invoice%).`,
+Returns fileName, fileId, downloadUrl, fileUrl, renderPath, contentType, previewable.
+NEVER fabricate document content — use fileUrl + metadata.fileId in createDocument(file-preview) for inline preview via render API.
+Host chatbot extracts document text into Linked e-Builder documents; use getLinkedDocuments for content Q&A.
+Use after resolve_project or with fileNamePattern/invoiceNumber (LIKE, e.g. %invoice% or %006%).`,
+
+  get_invoice_document: `PREFERRED when user asks to show, open, view, or preview an invoice document/PDF/image.
+Orchestrates: resolve_project → CommitmentInvoices lookup → search_documents with invoice number patterns.
+Returns bestMatch with fileUrl, fileId, renderPath, contentType, previewable.
+createDocument(file-preview) MUST include metadata.fileId and metadata.fileName from bestMatch for inline Word/PDF preview.
+For document content questions, host calls getLinkedDocuments with bestMatch.fileId or downloadUrl.`,
 } as const;

@@ -12,7 +12,7 @@ Domain-orchestration MCP server for **Trimble Unity Construct (e-Builder)** APIs
 ## What it does
 
 - Authenticates to e-Builder (password grant or bearer token)
-- Registers **13 MCP tools** for query/GET/process workflows and invoice review
+- Registers **14 MCP tools** for query/GET/process workflows, invoice review, and document discovery
 - Injects **server instructions** + **question recipes** into the MCP `initialize` payload so the host agent keeps calling tools until the answer is complete
 - Runs as **stdio** (local) or **Streamable HTTP** (Docker / remote)
 
@@ -32,7 +32,8 @@ Domain-orchestration MCP server for **Trimble Unity Construct (e-Builder)** APIs
 | `aggregate_records` | Local top-N / sum / count / group-by on prior results |
 | `assemble_invoice_evidence_pack` | Invoice review evidence pack orchestrator |
 | `evaluate_invoice_checks` | Deterministic invoice review checks |
-| `search_documents` | Find invoice PDFs/images for file-preview artifacts |
+| `search_documents` | Find invoice PDFs/images for file-preview + linked document access |
+| `get_invoice_document` | Orchestrated invoice lookup → document search → `bestMatch` |
 
 ### Query resources
 
@@ -83,7 +84,19 @@ NL pattern → recommended tool sequence (budgets, COs, invoices, retainage, app
 
 ### 4. MCP prompts (`register-prompts.ts` + `tool-expressions.ts`)
 
-Each of the 13 tools is registered via `server.registerPrompt()` with Postman-derived API paths and example tool-call JSON. Clients can call `prompts/get` (e.g. `query_records` with `resource=BudgetChanges`) to retrieve call expressions before invoking tools.
+Each of the 14 tools is registered via `server.registerPrompt()` with Postman-derived API paths and example tool-call JSON. Clients can call `prompts/get` (e.g. `query_records` with `resource=BudgetChanges`) to retrieve call expressions before invoking tools.
+
+## Unified Document Access
+
+MCP **discovers** documents (`search_documents`, `get_invoice_document`) and returns `fileId` + signed `downloadUrl`. The **host chatbot** downloads bytes and extracts text for agent Q&A.
+
+| Doc | Description |
+|-----|-------------|
+| [docs/unified-document-access.md](./docs/unified-document-access.md) | MCP role, tool output format, host integration |
+| [../vercel-nextjs-chatbot/docs/architecture/unified-document-access.md](../vercel-nextjs-chatbot/docs/architecture/unified-document-access.md) | Host fetch + extract pipeline |
+| [../docs/architecture/unified-document-access.md](../docs/architecture/unified-document-access.md) | Repo-level overview + diagrams |
+
+![Architecture](./docs/unified-document-access-architecture.svg)
 
 ## Project layout
 

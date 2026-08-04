@@ -13,6 +13,7 @@ Documentation for the **Invoice Review Advisor** feature: an advisory-only invoi
 | Document | Description |
 |----------|-------------|
 | [invoice-review-advisor.md](./architecture/invoice-review-advisor.md) | End-to-end system design (chatbot, MCP, e-Builder, artifacts) |
+| [unified-document-access.md](./architecture/unified-document-access.md) | Document fetch + text extraction for uploads and e-Builder links |
 
 ## Features
 
@@ -20,6 +21,7 @@ Documentation for the **Invoice Review Advisor** feature: an advisory-only invoi
 |----------|-------------|
 | [invoice-review-advisor.md](./features/invoice-review-advisor.md) | How to run an invoice review session |
 | [personas.md](./features/personas.md) | Review personas — create, edit, enable/disable |
+| [unified-document-access.md](./features/unified-document-access.md) | Read e-Builder document contents in chat |
 | [wapi-voice-assistant-prompt.md](./wapi-voice-assistant-prompt.md) | WAPI system prompt for voice-tolerant project resolution |
 
 ## Decisions (ADRs)
@@ -41,6 +43,8 @@ Documentation for the **Invoice Review Advisor** feature: an advisory-only invoi
 | [invoice-review-architecture.png](./images/invoice-review-architecture.png) | High-level architecture |
 | [invoice-review-workflow.png](./images/invoice-review-workflow.png) | Mandatory review workflow |
 | [add-mcp-server.png](./images/add-mcp-server.png) | Adding the e-Builder MCP server in chat settings |
+| [unified-document-access-architecture.svg](./images/unified-document-access-architecture.svg) | Unified document access — component flow |
+| [unified-document-access-workflow.svg](./images/unified-document-access-workflow.svg) | e-Builder document Q&A user workflow |
 
 ## Related chatbot docs
 

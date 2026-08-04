@@ -18,6 +18,7 @@ Next.js chat app based on the [Vercel AI Chatbot](https://github.com/vercel/ai-c
 - **Secrets vault** — per-user credentials (including Trimble site login) injectable into prompts and browser flows
 - **Browserbase** — web search, page fetch, and live cloud Chrome with a right-hand live-view panel
 - **Uploads** — images/documents to Google Cloud Storage; optional “Use in browser” sync into Browserbase sessions
+- **Unified Document Access** — e-Builder linked documents: MCP metadata + host fetch/extract for agent Q&A ([docs](./docs/architecture/unified-document-access.md))
 - **Mayo OneAgent** — case-based payment review using private GCS, OpenAI Files/vector stores, hosted File Search, strict Responses API extraction, deterministic checks, and mandatory reviewer decisions
 
 ## Features
@@ -65,7 +66,7 @@ With the MCP HTTP server running (e.g. Docker on port 8080):
 - **url:** `http://localhost:8080/mcp`
 - **headers:** `{ "Authorization": "Bearer <MCP_API_KEY>" }` when the server requires a key
 
-See [`../ebuilder-agent-mcp/README.md`](../ebuilder-agent-mcp/README.md) for MCP tools, env vars, and Docker.
+See [`../ebuilder-agent-mcp/README.md`](../ebuilder-agent-mcp/README.md) for MCP tools, env vars, and Docker. Document access: [`../ebuilder-agent-mcp/docs/unified-document-access.md`](../ebuilder-agent-mcp/docs/unified-document-access.md).
 
 ## Model providers
 

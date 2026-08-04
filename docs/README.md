@@ -20,6 +20,7 @@ Documentation for the **Invoice Review Advisor** feature: an advisory-only invoi
 |----------|-------------|
 | [invoice-review-advisor.md](./features/invoice-review-advisor.md) | How to run an invoice review session |
 | [personas.md](./features/personas.md) | Review personas — create, edit, enable/disable |
+| [wapi-voice-assistant-prompt.md](./wapi-voice-assistant-prompt.md) | WAPI system prompt for voice-tolerant project resolution |
 
 ## Decisions (ADRs)
 

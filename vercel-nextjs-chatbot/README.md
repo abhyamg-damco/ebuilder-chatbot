@@ -18,6 +18,7 @@ Next.js chat app based on the [Vercel AI Chatbot](https://github.com/vercel/ai-c
 - **Secrets vault** — per-user credentials (including Trimble site login) injectable into prompts and browser flows
 - **Browserbase** — web search, page fetch, and live cloud Chrome with a right-hand live-view panel
 - **Uploads** — images/documents to Google Cloud Storage; optional “Use in browser” sync into Browserbase sessions
+- **Mayo OneAgent** — case-based payment review using private GCS, OpenAI Files/vector stores, hosted File Search, strict Responses API extraction, deterministic checks, and mandatory reviewer decisions
 
 ## Features
 
@@ -90,6 +91,7 @@ cp .env.example .env.local
 | `AUTH_TRUST_HOST` | Yes* | `true` behind Docker / reverse proxy |
 | `AUTH_URL` | Docker* | Public URL matching host port (e.g. `http://localhost:3002`) |
 | `OPENAI_API_KEY` | Yes | OpenAI API key |
+| `OPENAI_MAYO_MODEL` | No | Responses API model for Mayo extraction/review (default: `gpt-5.6`) |
 | `POSTGRES_URL` | Yes | Postgres connection string |
 | `REDIS_URL` | Yes | Redis URL (resumable streams) |
 | `GCS_BUCKET_NAME` | Yes | GCS bucket for uploads |
@@ -121,6 +123,24 @@ pnpm dev
 ```
 
 App: [http://localhost:3000](http://localhost:3000)
+
+### Mayo OneAgent
+
+Open `/mayo` after signing in. Create a case, upload evidence directly to
+private GCS, wait for OpenAI indexing, then run per-document extraction or a
+cross-document case review. Findings are advisory until a reviewer accepts,
+rejects, or resolves them.
+
+Before using browser-to-GCS resumable uploads, configure the private bucket's
+CORS policy to allow `PUT` from each application origin. Mayo documents may be
+up to 512 MB for hosted File Search. Direct PDF extraction and draft/final
+comparison use the OpenAI 50 MB combined request limit.
+
+Apply the Mayo relational schema before opening the workspace:
+
+```bash
+pnpm db:migrate
+```
 
 ### Useful scripts
 

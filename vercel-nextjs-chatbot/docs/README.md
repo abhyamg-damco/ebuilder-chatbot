@@ -5,7 +5,21 @@
 | Document | Description |
 |----------|-------------|
 | [browserbase-integration.md](./architecture/browserbase-integration.md) | End-to-end Browserbase integration overview |
+| [unified-document-access.md](./architecture/unified-document-access.md) | Document fetch + text extraction (uploads + e-Builder links) |
 | [agent-skills.md](./features/agent-skills.md) | Custom @mention skills in settings and chat |
+
+## Features
+
+| Document | Description |
+|----------|-------------|
+| [unified-document-access.md](./features/unified-document-access.md) | How agents read uploaded and e-Builder document contents |
+
+## Images
+
+| File | Description |
+|------|-------------|
+| [unified-document-access-architecture.svg](./images/unified-document-access-architecture.svg) | Architecture diagram |
+| [unified-document-access-workflow.svg](./images/unified-document-access-workflow.svg) | User workflow diagram |
 
 ## Invoice Review Advisor (repo root)
 

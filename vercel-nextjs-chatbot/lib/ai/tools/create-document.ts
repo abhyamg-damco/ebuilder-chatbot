@@ -19,7 +19,7 @@ Kind selection (Ivy / e-Builder data):
 - chart: time series or comparisons (spend by month, trends). JSON with chartType, title, xKey, series[], data[], optional format.divideBy for millions.
 - dashboard: KPI summary + optional table/chart (top vendors, retainage totals).
 - sheet: CSV tables (bid leveling, line-item lists, over/under budget rows).
-- file-preview: PDF/image preview. JSON with title, fileUrl, contentType, metadata.
+- file-preview: PDF/image/Word preview. JSON with title, fileUrl (MCP bestMatch.fileUrl/downloadUrl — real https URL only), fileId + metadata.fileId + metadata.fileName from MCP. For document content Q&A use getLinkedDocuments or Linked e-Builder documents text — NEVER copy example UUIDs from prompts.
 - advisory-brief: invoice review only (JSON with riskRating, flags, passedChecks, recommendation).
 - text/code: essays and scripts only — not for MCP query results.
 `;

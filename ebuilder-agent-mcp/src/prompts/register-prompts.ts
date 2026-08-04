@@ -310,6 +310,7 @@ export function registerToolPrompts(server: McpServer): void {
       argsSchema: {
         projectSearchTerm: z.string().optional(),
         fileNamePattern: z.string().optional(),
+        invoiceNumber: z.string().optional(),
       },
     },
     (args) =>
@@ -319,8 +320,32 @@ export function registerToolPrompts(server: McpServer): void {
         }, {
           projectSearchTerm: args.projectSearchTerm ?? "Tower",
           fileNamePattern: args.fileNamePattern ?? "%invoice%",
+          invoiceNumber: args.invoiceNumber ?? "006",
           limit: 20,
         })
+      )
+  );
+
+  server.registerPrompt(
+    "get_invoice_document",
+    {
+      description: TOOL_GUIDES.get_invoice_document,
+      argsSchema: {
+        invoiceNumber: z.string().optional(),
+        projectSearchTerm: z.string().optional(),
+      },
+    },
+    (args) =>
+      userMessage(
+        buildPromptBody(
+          TOOL_GUIDES.get_invoice_document,
+          TOOL_EXPRESSIONS.get_invoice_document,
+          {
+            invoiceNumber: args.invoiceNumber ?? "006",
+            projectSearchTerm: args.projectSearchTerm ?? "Tower",
+            limit: 10,
+          }
+        )
       )
   );
 }

@@ -12,7 +12,7 @@ Domain-orchestration MCP server for **Trimble Unity Construct (e-Builder)** APIs
 ## What it does
 
 - Authenticates to e-Builder (password grant or bearer token)
-- Registers **13 MCP tools** for query/GET/process workflows and invoice review
+- Registers **14 MCP tools** for query/GET/process workflows, invoice review, and document discovery
 - Injects **server instructions** + **question recipes** into the MCP `initialize` payload so the host agent keeps calling tools until the answer is complete
 - Runs as **stdio** (local) or **Streamable HTTP** (Docker / remote)
 
@@ -25,14 +25,15 @@ Domain-orchestration MCP server for **Trimble Unity Construct (e-Builder)** APIs
 | `query_records` | POST Query with `SelectedFields` + `Filters` + pagination |
 | `get_records` | GET list (`dateModified`, `limit`, `offset`) |
 | `get_record_detail` | GET by id + optional sub-resource (`items`, `changes`, `customfields`, `contacts`, `reviewers`) |
-| `resolve_project` | Fuzzy project match by name/code/custom ID |
+| `resolve_project` | Voice-tolerant project match by name/code/custom ID/nickname |
 | `resolve_company` | Fuzzy vendor/company match (`Companies`) |
 | `query_processes` | Workflow queries (invoice approvals, bids, CO processes) |
 | `get_original_budget` | Orchestrated: project search → Budgets schema → budget query |
 | `aggregate_records` | Local top-N / sum / count / group-by on prior results |
 | `assemble_invoice_evidence_pack` | Invoice review evidence pack orchestrator |
 | `evaluate_invoice_checks` | Deterministic invoice review checks |
-| `search_documents` | Find invoice PDFs/images for file-preview artifacts |
+| `search_documents` | Find invoice PDFs/images for file-preview + linked document access |
+| `get_invoice_document` | Orchestrated invoice lookup → document search → `bestMatch` |
 
 ### Query resources
 
@@ -75,13 +76,27 @@ Injected via MCP `instructions` on initialize. Key rules:
 
 Per-tool description text registered on each MCP tool (when to call, example args).
 
+`resolve_project` accepts raw voice references such as `E. SRI 00. 6A`; it normalizes code variants and searches project names, URL-safe names, and tenant project-ID custom fields. It does not maintain a static nickname-to-code mapping.
+
 ### 3. Question recipes (`question-recipes.ts`)
 
 NL pattern → recommended tool sequence (budgets, COs, invoices, retainage, approval queues, submittals, forecasts, etc.). Embedded into server instructions.
 
 ### 4. MCP prompts (`register-prompts.ts` + `tool-expressions.ts`)
 
-Each of the 13 tools is registered via `server.registerPrompt()` with Postman-derived API paths and example tool-call JSON. Clients can call `prompts/get` (e.g. `query_records` with `resource=BudgetChanges`) to retrieve call expressions before invoking tools.
+Each of the 14 tools is registered via `server.registerPrompt()` with Postman-derived API paths and example tool-call JSON. Clients can call `prompts/get` (e.g. `query_records` with `resource=BudgetChanges`) to retrieve call expressions before invoking tools.
+
+## Unified Document Access
+
+MCP **discovers** documents (`search_documents`, `get_invoice_document`) and returns `fileId` + signed `downloadUrl`. The **host chatbot** downloads bytes and extracts text for agent Q&A.
+
+| Doc | Description |
+|-----|-------------|
+| [docs/unified-document-access.md](./docs/unified-document-access.md) | MCP role, tool output format, host integration |
+| [../vercel-nextjs-chatbot/docs/architecture/unified-document-access.md](../vercel-nextjs-chatbot/docs/architecture/unified-document-access.md) | Host fetch + extract pipeline |
+| [../docs/architecture/unified-document-access.md](../docs/architecture/unified-document-access.md) | Repo-level overview + diagrams |
+
+![Architecture](./docs/unified-document-access-architecture.svg)
 
 ## Project layout
 
@@ -176,6 +191,7 @@ npm run smoke-test
 ```
 
 Exercises Budgets schema, project resolve (`Tower`), and a sample budget query.
+Set `EBUILDER_SMOKE_PROJECT='E. SRI 00. 6A'` to add an optional voice-reference project-resolution check for a tenant that contains a matching project.
 
 ### Other scripts
 

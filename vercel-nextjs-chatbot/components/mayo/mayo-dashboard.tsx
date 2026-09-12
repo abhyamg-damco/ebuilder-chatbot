@@ -82,7 +82,7 @@ export function MayoDashboard() {
             <div className="flex items-center gap-2 text-emerald-600">
               <FileSearchIcon className="size-5" />
               <span className="font-mono text-xs uppercase tracking-[0.18em]">
-                OpenAI document intelligence
+                Payment review
               </span>
             </div>
             <h1 className="font-semibold text-3xl tracking-tight">
@@ -104,7 +104,9 @@ export function MayoDashboard() {
             onSubmit={createCase}
           >
             <div className="space-y-2">
-              <Label htmlFor="mayo-case-name">Case name</Label>
+              <Label htmlFor="mayo-case-name">
+                Case name <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="mayo-case-name"
                 onChange={(event) => setName(event.target.value)}
@@ -114,7 +116,9 @@ export function MayoDashboard() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="mayo-project-name">Project name</Label>
+              <Label htmlFor="mayo-project-name">
+                Project name <span className="text-destructive">*</span>
+              </Label>
               <Input
                 id="mayo-project-name"
                 onChange={(event) => setProjectName(event.target.value)}
@@ -128,7 +132,7 @@ export function MayoDashboard() {
               <Input
                 id="mayo-project-number"
                 onChange={(event) => setProjectNumber(event.target.value)}
-                placeholder="Optional"
+                placeholder="Project reference number"
                 value={projectNumber}
               />
             </div>
@@ -175,14 +179,13 @@ export function MayoDashboard() {
             <FileSearchIcon className="mx-auto mb-4 size-8 text-muted-foreground" />
             <h2 className="font-medium text-lg">No review cases yet</h2>
             <p className="mt-1 text-muted-foreground text-sm">
-              Create a case, upload the project packet, and let OpenAI index the
-              evidence.
+              Start a case, add the payment packet, and Mayo reviews it for you.
             </p>
           </div>
         ) : null}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {data?.cases.map(({ case: record, membership }) => (
+          {data?.cases.map(({ case: record }) => (
             <Link
               className="group rounded-2xl border bg-card p-5 transition hover:border-emerald-500/40 hover:shadow-md"
               href={`/mayo/${record.id}`}
@@ -199,10 +202,7 @@ export function MayoDashboard() {
                   {record.status.replace("_", " ")}
                 </Badge>
               </div>
-              <div className="mt-6 flex items-center justify-between text-xs">
-                <span className="font-mono text-muted-foreground uppercase">
-                  {membership.role}
-                </span>
+              <div className="mt-6 flex items-center justify-end text-xs">
                 <span className="flex items-center gap-1 text-emerald-600">
                   Open case
                   <ArrowRightIcon className="size-3 transition group-hover:translate-x-0.5" />

@@ -2,13 +2,18 @@ import type { MayoDocumentExtractionData, MayoNormalizedRule } from "./types";
 
 export const MAYO_PROMPT_VERSION = "mayo-openai-v1";
 
-export function buildMayoExtractionPrompt(input: {
+export function buildMayoClassificationPrompt(input: {
   filename: string;
-  category: string;
 }): string {
+  return `Identify the document type of "${input.filename}" from its content.
+
+This is classification only. Do not extract figures.`;
+}
+
+export function buildMayoExtractionPrompt(input: { filename: string }): string {
   return `You are extracting auditable construction payment-review data from "${input.filename}".
 
-The declared document category is "${input.category}".
+Identify the document type from its content.
 
 Extract only facts present in the document. Preserve monetary values as numbers in the document currency. Use null for unavailable scalar values and list every material missing field in missingFields. Include short verbatim supporting excerpts and best-effort one-based PDF page numbers. Never invent a page number. Confidence is from 0 to 1.
 

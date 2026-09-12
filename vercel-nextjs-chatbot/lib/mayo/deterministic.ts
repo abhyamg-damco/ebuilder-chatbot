@@ -12,6 +12,20 @@ const DEFAULT_OVERBILL_TOLERANCE_USD = 1;
 const DEFAULT_RETAINAGE_TOLERANCE_PCT = 0.0025;
 const DEFAULT_LARGE_PERIOD_PCT = 0.2;
 
+/**
+ * Rule config percentages are fractions (0.0025 is a quarter of a percent), but
+ * extraction reports the contract retainage rate the way the document states it,
+ * in percentage points: a 10% contract comes back as `10`. Multiplying by that
+ * directly overstated expected retainage by a factor of 100.
+ *
+ * Anything above 1 is read as percentage points. A retainage rate at or below 1
+ * is already a fraction, since a contract withholding 100% of every payment does
+ * not exist and rates below 1% are not used in practice.
+ */
+function toRetainageFraction(rate: number): number {
+  return rate > 1 ? rate / 100 : rate;
+}
+
 function toEvidence(
   extraction: MayoDocumentExtractionData,
   fallbackFilename: string
@@ -132,7 +146,8 @@ export function evaluateMayoDeterministicRules(input: {
     ) {
       const rule = findRule(input.rules, "RETAINAGE");
       const expectedPct =
-        rule?.config.expectedRetainagePct ?? extraction.retainagePercent;
+        rule?.config.expectedRetainagePct ??
+        toRetainageFraction(extraction.retainagePercent);
       const tolerancePct =
         rule?.config.tolerancePct ?? DEFAULT_RETAINAGE_TOLERANCE_PCT;
       const expected = extraction.totalCompletedAndStored * expectedPct;

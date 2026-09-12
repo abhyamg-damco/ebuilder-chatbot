@@ -158,4 +158,56 @@ describe("Mayo deterministic review", () => {
 
     assert.ok(findings.some((finding) => finding.ruleCode === "LARGE_PERIOD"));
   });
+
+  it("reads the retainage rate whether it is a fraction or percentage points", () => {
+    const retainageRules: MayoNormalizedRule[] = [
+      {
+        id: "rule-retainage",
+        familyId: "payment-review",
+        code: "RETAINAGE",
+        name: "Retainage",
+        description: "Retainage check",
+        kind: "deterministic",
+        severity: "high",
+        config: { tolerancePct: 0.0025 },
+        version: 1,
+      },
+    ];
+    // 60 withheld against 600 completed is exactly the stated 10% rate, so a
+    // correct document must not raise a finding under either convention.
+    const asFraction = { ...extraction, retainagePercent: 0.1, lineItems: [] };
+    const asPercentagePoints = {
+      ...extraction,
+      retainagePercent: 10,
+      lineItems: [],
+    };
+
+    for (const data of [asFraction, asPercentagePoints]) {
+      const findings = evaluateMayoDeterministicRules({
+        extractions: [{ filename: "pay-app.pdf", data }],
+        rules: retainageRules,
+      });
+      assert.equal(
+        findings.filter((finding) => finding.ruleCode === "RETAINAGE").length,
+        0
+      );
+    }
+
+    // And a genuine under-withholding is still caught.
+    const underWithheld = {
+      ...extraction,
+      retainagePercent: 10,
+      retainageAmount: 20,
+      lineItems: [],
+    };
+    const findings = evaluateMayoDeterministicRules({
+      extractions: [{ filename: "pay-app.pdf", data: underWithheld }],
+      rules: retainageRules,
+    });
+    const retainage = findings.find(
+      (finding) => finding.ruleCode === "RETAINAGE"
+    );
+    assert.ok(retainage);
+    assert.equal(retainage.amountImpact, 40);
+  });
 });

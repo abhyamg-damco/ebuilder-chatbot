@@ -1,4 +1,4 @@
-export const DEFAULT_CHAT_MODEL = "gpt-5.2-chat-latest";
+export const DEFAULT_CHAT_MODEL = "gpt-5.4";
 
 export const titleModel = {
   id: "gpt-4o-mini",
@@ -24,7 +24,7 @@ export type ChatModel = {
 /** Static capability map for OpenAI models (no gateway lookup required). */
 const openaiCapabilities: Record<string, ModelCapabilities> = {
   "gpt-5.5": { tools: true, vision: true, reasoning: true },
-  "gpt-5.2-chat-latest": { tools: true, vision: true, reasoning: true },
+  "gpt-5.4": { tools: true, vision: true, reasoning: true },
   "gpt-4o": { tools: true, vision: true, reasoning: false },
   "gpt-4o-mini": { tools: true, vision: true, reasoning: false },
   "gpt-4-turbo": { tools: true, vision: true, reasoning: false },
@@ -40,12 +40,17 @@ export const chatModels: ChatModel[] = [
       "Latest frontier model for complex professional work (reasoning_effort disabled for tool use)",
     reasoningEffort: "none",
   },
+  /**
+   * The whole `-chat-latest` family is deprecated and returns 404 at inference
+   * while still being listed by /v1/models, so a listing is not enough to tell
+   * whether a model is alive. GPT-5.4 is the newest that takes function tools on
+   * /v1/chat/completions without reasoning effort having to be suppressed.
+   */
   {
-    id: "gpt-5.2-chat-latest",
-    name: "GPT-5.2 Chat",
+    id: "gpt-5.4",
+    name: "GPT-5.4",
     provider: "openai",
-    description: "Latest GPT-5.2 chat model with tools and vision",
-    reasoningEffort: "medium",
+    description: "Frontier model with tools and vision",
   },
   {
     id: "gpt-4o",

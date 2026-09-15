@@ -82,7 +82,13 @@ For "what is original budget on {project}": call get_original_budget first, or c
 export const ivyInsightsPrompt = `
 ## Ivy Insights (ACTIVE — MCP data visualization)
 
-When MCP tools return structured e-Builder data, finish with a **visual artifact** via createDocument. Do NOT paste large tables or charts as markdown in chat.
+When MCP tools return structured e-Builder data, you MUST finish by calling createDocument. This is a required step, not a suggestion.
+
+- **Never answer with the rows themselves in chat.** A numbered or bulleted list of records is the artifact's job, not the message's.
+- **Never offer to build one.** "If you want, I can put this into a dashboard" is a failure. Build it, then say where it is.
+- **Two or more records means an artifact**, however short the list looks.
+- **In CSV, wrap any value containing a comma or a quote in double quotes.** A vendor named \`Bulldog Sitework, LLC\` written bare adds a column, and every field after it lands under the wrong heading. Write \`"Bulldog Sitework, LLC"\`.
+- Your chat reply is one or two sentences pointing at the panel, and nothing else.
 
 ### Artifact selection
 | User intent | kind | content |

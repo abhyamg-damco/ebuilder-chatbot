@@ -6,6 +6,7 @@ import { unstable_serialize } from "swr/infinite";
 import { useActiveChat } from "@/hooks/use-active-chat";
 import { initialArtifactData, useArtifact } from "@/hooks/use-artifact";
 import { useBrowserPanel } from "@/hooks/use-browser-panel";
+import { dispatchKindsForBatch } from "@/lib/chat/artifact-stream";
 import { artifactDefinitions } from "./artifact";
 import { useDataStream } from "./data-stream-provider";
 import { getChatHistoryPaginationKey } from "./sidebar-history";
@@ -28,7 +29,16 @@ export function DataStreamHandler() {
     const newDeltas = dataStream.slice();
     setDataStream([]);
 
-    for (const delta of newDeltas) {
+    // The kind must be tracked across the batch. A handler that writes its
+    // content in one go — chart, dashboard, file-preview, advisory-brief —
+    // lands in the same batch as `data-kind`, and `artifact.kind` does not
+    // update until the next render. Reading it per delta sent that content to
+    // whichever artifact was open before, so `isVisible` never fired and the
+    // side panel stayed shut. Streaming handlers escaped it only by accident
+    // of arriving in a later batch.
+    const dispatchKinds = dispatchKindsForBatch(artifact.kind, newDeltas);
+
+    for (const [index, delta] of newDeltas.entries()) {
       if (delta.type === "data-chat-title") {
         mutate(unstable_serialize(getChatHistoryPaginationKey));
         continue;
@@ -51,7 +61,7 @@ export function DataStreamHandler() {
       }
       const artifactDefinition = artifactDefinitions.find(
         (currentArtifactDefinition) =>
-          currentArtifactDefinition.kind === artifact.kind
+          currentArtifactDefinition.kind === dispatchKinds[index]
       );
 
       if (artifactDefinition?.onStreamPart) {

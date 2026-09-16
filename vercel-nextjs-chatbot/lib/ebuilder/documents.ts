@@ -4,6 +4,7 @@ import {
   isAllowedEBuilderDownloadUrl,
   isEBuilderConfigured,
 } from "@/lib/ebuilder/download-url-policy";
+import { buildDocumentByFileIdQuery } from "@/lib/ebuilder/queries";
 
 export { isAllowedEBuilderDownloadUrl, isEBuilderConfigured };
 
@@ -94,20 +95,7 @@ export async function resolveDocumentDownloadUrl(
         Accept: "application/json",
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        SelectedFields: [
-          "Document/FileId",
-          "Document/FileName",
-          "Document/DownloadURL",
-        ],
-        Filters: [
-          {
-            Field: "Document/FileId",
-            Operation: "EQ",
-            Value: fileId,
-          },
-        ],
-      }),
+      body: JSON.stringify(buildDocumentByFileIdQuery(fileId)),
     }
   );
 

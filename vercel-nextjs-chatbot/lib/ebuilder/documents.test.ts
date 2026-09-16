@@ -4,6 +4,7 @@ import {
   isAllowedEBuilderDownloadUrl,
   isEBuilderConfigured,
 } from "./download-url-policy.js";
+import { buildDocumentByFileIdQuery } from "./queries.js";
 
 describe("isAllowedEBuilderDownloadUrl", () => {
   it("allows e-Builder S3 signed URLs", () => {
@@ -39,5 +40,30 @@ describe("isEBuilderConfigured", () => {
     process.env.EBUILDER_ACCESS_TOKEN = "test-token";
     assert.equal(isEBuilderConfigured(), true);
     process.env.EBUILDER_ACCESS_TOKEN = previous;
+  });
+});
+
+describe("buildDocumentByFileIdQuery", () => {
+  const fileId = "2d2cdf28-42ff-4f0e-82c0-00b05b89eb85";
+
+  it("uses the equality operator e-Builder accepts", () => {
+    // "EQ" returns 400 Invalid filter operation, which silently disabled
+    // document preview: no download URL resolved, so every file fell back to
+    // a download link.
+    assert.equal(buildDocumentByFileIdQuery(fileId).Filters[0].Operation, "=");
+  });
+
+  it("filters on the file id it was given", () => {
+    const filter = buildDocumentByFileIdQuery(fileId).Filters[0];
+    assert.equal(filter.Field, "Document/FileId");
+    assert.equal(filter.Value, fileId);
+  });
+
+  it("asks for the download URL, or there is nothing to preview", () => {
+    assert.ok(
+      buildDocumentByFileIdQuery(fileId).SelectedFields.includes(
+        "Document/DownloadURL"
+      )
+    );
   });
 });

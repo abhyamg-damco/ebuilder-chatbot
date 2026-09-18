@@ -6,7 +6,26 @@ import { getArtifactTelemetrySettings } from "@/lib/observability/langfuse";
 
 export const sheetDocumentHandler = createDocumentHandler<"sheet">({
   kind: "sheet",
-  onCreateDocument: async ({ title, dataStream, modelId }) => {
+  onCreateDocument: async ({ title, content, dataStream, modelId }) => {
+    /**
+     * When the agent has already assembled the rows, use them.
+     *
+     * Without this the title alone was handed to a second model that has never
+     * seen the conversation or the tool results, so it invented a plausible
+     * spreadsheet: real-looking project codes, names and owners that exist
+     * nowhere in the tenant. The chart, dashboard, file-preview and
+     * advisory-brief handlers all honour `content` already. Generating from the
+     * title is only correct when there is nothing to render.
+     */
+    if (content) {
+      dataStream.write({
+        type: "data-sheetDelta",
+        data: content,
+        transient: true,
+      });
+      return content;
+    }
+
     let draftContent = "";
 
     const { fullStream } = streamText({

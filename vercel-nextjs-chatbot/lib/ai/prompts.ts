@@ -128,16 +128,38 @@ When MCP tools return structured e-Builder data, you MUST finish by calling crea
 2. Call **one** createDocument with the full JSON or CSV content.
 3. Reply in chat with 1–2 sentences pointing to the insight panel — never repeat the artifact body.
 
-### Chart JSON example (spend in millions)
+### Chart rules — the reader is non-technical
+
+- **\`chartType\`:** \`bar-horizontal\` for ranking things by a value, \`line\` or \`area\` over time, \`bar\` only for a few short category names. Names like "Curtis Gopher Tortoise Relocation Services" have nowhere to go on a horizontal axis.
+- **Always set \`format\`.** Money is \`"format": { "currency": "USD" }\`. Without it a figure renders as \`257134160\`.
+- **Send real values.** Do not pre-divide the numbers, \`format\` presents them.
+- **The title states the finding**, not the axes: "ABC Company accounts for 73% of invoiced value" beats "Invoice amounts by vendor". Put the dimensions in \`subtitle\`.
+- **One series needs no \`color\`.** The default is correct. Never use \`slate\`, it is the de-emphasis grey and reads as "no data".
+- **\`bar-horizontal\` sorts itself** descending. Do not reorder \`data\` by hand.
+
+### Chart JSON example (ranked, the common case)
 \`\`\`json
 {
-  "chartType": "bar",
-  "title": "Program spend by month",
+  "chartType": "bar-horizontal",
+  "title": "ABC Company accounts for most invoiced value",
+  "subtitle": "Invoice totals by vendor, all projects",
+  "xKey": "vendor",
+  "series": [{ "key": "amount", "label": "Invoice total" }],
+  "data": [{ "vendor": "*ABC Company", "amount": 257134160.47 }],
+  "format": { "currency": "USD" }
+}
+\`\`\`
+
+### Chart JSON example (over time, in millions)
+\`\`\`json
+{
+  "chartType": "line",
+  "title": "Program spend climbed through 2025",
   "subtitle": "2023–2025, values in millions USD",
   "xKey": "month",
-  "series": [{ "key": "spend", "label": "Spend ($M)", "color": "sky" }],
+  "series": [{ "key": "spend", "label": "Spend ($M)" }],
   "data": [{ "month": "2023-01", "spend": 12500000 }],
-  "format": { "divideBy": 1000000, "valueSuffix": "M", "decimals": 1 }
+  "format": { "divideBy": 1000000, "valuePrefix": "$", "valueSuffix": "M", "decimals": 1 }
 }
 \`\`\`
 

@@ -21,9 +21,10 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import useSWR from "swr";
+import useSWR, { type KeyedMutator } from "swr";
 import { MessageResponse } from "@/components/ai-elements/message";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,8 @@ import { cn, fetcher } from "@/lib/utils";
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
+const POLL_INTERVAL_MS = 3000;
+
 type WorkspaceTab =
   | "documents"
   | "extractions"
@@ -58,30 +61,28 @@ type WorkspaceTab =
   | "rules"
   | "audit";
 
-const tabs: Array<{
+type TabDefinition = {
   id: WorkspaceTab;
   label: string;
   icon: React.ComponentType<{ className?: string }>;
-}> = [
+};
+
+const primaryTabs: TabDefinition[] = [
   { id: "documents", label: "Documents", icon: FileTextIcon },
-  { id: "extractions", label: "Extractions", icon: DatabaseIcon },
   { id: "findings", label: "Findings", icon: ShieldCheckIcon },
+];
+
+/** Reference and configuration panels, reachable from "More". */
+const secondaryTabs: TabDefinition[] = [
+  { id: "extractions", label: "Extractions", icon: DatabaseIcon },
   { id: "comparison", label: "Final comparison", icon: ScaleIcon },
   { id: "ebuilder", label: "eBuilder", icon: RefreshCwIcon },
   { id: "rules", label: "Rules", icon: Settings2Icon },
   { id: "audit", label: "Audit", icon: ScrollTextIcon },
 ];
 
-const categories: Array<{ value: MayoDocumentCategory; label: string }> = [
-  { value: "contract", label: "Contract" },
-  { value: "amendment", label: "Amendment" },
-  { value: "pay_application", label: "Pay application" },
-  { value: "invoice", label: "Invoice" },
-  { value: "change_order", label: "Change order" },
-  { value: "prior_payment", label: "Prior payment" },
-  { value: "supporting_document", label: "Supporting document" },
-  { value: "other", label: "Other" },
-];
+/** Placeholder sent at upload. Extraction reports the real documentType. */
+const DEFAULT_UPLOAD_CATEGORY: MayoDocumentCategory = "other";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) {
@@ -125,6 +126,146 @@ function inferMayoMimeType(file: File): string {
   return extension
     ? (byExtension[extension] ?? "application/octet-stream")
     : "application/octet-stream";
+}
+
+/**
+ * True while any stage of the pipeline is still moving. Drives both the polling
+ * interval and the progress banner, so an idle case stops polling entirely.
+ */
+function hasPendingOperations(snapshot: MayoCaseSnapshot | undefined): boolean {
+  return Boolean(
+    snapshot?.documents.some((document) =>
+      ["uploading", "uploaded", "indexing"].includes(document.status)
+    ) ||
+      snapshot?.extractions.some((extraction) =>
+        ["pending", "processing"].includes(extraction.status)
+      ) ||
+      snapshot?.reviewRuns.some((run) =>
+        ["queued", "running"].includes(run.status)
+      ) ||
+      snapshot?.comparisons.some((comparison) =>
+        ["queued", "running"].includes(comparison.status)
+      ) ||
+      snapshot?.integrationSyncs.some((sync) =>
+        ["queued", "running"].includes(sync.status)
+      )
+  );
+}
+
+/**
+ * Whether the reviewer still needs a way to trigger extraction by hand. The
+ * pipeline handles documents uploaded in this session, so this is the escape
+ * hatch for older documents and for extractions that failed.
+ */
+function needsManualExtraction(
+  document: MayoClientDocument,
+  extractions: MayoCaseSnapshot["extractions"]
+): boolean {
+  const extraction = extractions.find(
+    (candidate) => candidate.documentId === document.id
+  );
+  return !extraction || extraction.status === "failed";
+}
+
+/** Distinguishes a retry from a first attempt, so the button can say which it is. */
+function extractionFailed(
+  document: MayoClientDocument,
+  extractions: MayoCaseSnapshot["extractions"]
+): boolean {
+  return extractions.some(
+    (candidate) =>
+      candidate.documentId === document.id && candidate.status === "failed"
+  );
+}
+
+/**
+ * The figures a deterministic finding was computed from, pulled straight out of
+ * the extraction and the rule's own configuration.
+ *
+ * This deliberately does not recompute anything. The finding's description
+ * already carries the result, so duplicating the arithmetic here would risk the
+ * screen and the engine drifting apart. All this does is show which numbers went
+ * in, and where they came from, so a reviewer can judge the result instead of
+ * taking it on trust.
+ */
+function findingInputs(
+  finding: MayoClientFinding,
+  data: MayoCaseSnapshot
+): Array<{ label: string; value: string }> {
+  const documentId = finding.evidence.find(
+    (evidence) => evidence.documentId
+  )?.documentId;
+  const extracted = data.extractions.find(
+    (extraction) => extraction.documentId === documentId
+  )?.data;
+  const rule = data.rules.find(
+    (candidate) => candidate.code === finding.ruleCode
+  );
+  if (!extracted) {
+    return [];
+  }
+
+  const rows: Array<{ label: string; value: string }> = [];
+  const push = (label: string, value: string | null) => {
+    if (value !== null) {
+      rows.push({ label, value });
+    }
+  };
+  const money = (value: number | null | undefined) =>
+    value === null || value === undefined ? null : formatMoney(value);
+
+  if (finding.ruleCode === "RETAINAGE") {
+    push("Completed to date", money(extracted.totalCompletedAndStored));
+    push(
+      "Contract retainage rate",
+      extracted.retainagePercent === null
+        ? null
+        : `${extracted.retainagePercent > 1 ? extracted.retainagePercent : extracted.retainagePercent * 100}%`
+    );
+    push("Retainage withheld", money(extracted.retainageAmount));
+  } else if (finding.ruleCode === "MATH") {
+    push(
+      "Line items this period",
+      money(
+        extracted.lineItems.reduce(
+          (sum, line) => sum + (line.currentApplication ?? 0),
+          0
+        )
+      )
+    );
+    push("Stated current payment", money(extracted.currentPayment));
+  } else if (finding.ruleCode === "OVER_BILLING") {
+    push("Contract value", money(extracted.contractValue));
+    push("Completed to date", money(extracted.totalCompletedAndStored));
+  } else if (finding.ruleCode === "CO_UNAPPROVED") {
+    push("Pending change orders", money(extracted.pendingChangeOrders));
+    push(
+      "Billed against pending",
+      money(extracted.billedAgainstPendingChangeOrders)
+    );
+  } else if (finding.ruleCode === "LARGE_PERIOD") {
+    push("This period", money(extracted.currentPayment));
+    push("Previous payments", money(extracted.previousPayments));
+  }
+
+  if (rows.length === 0) {
+    return [];
+  }
+  if (typeof rule?.config.toleranceUsd === "number") {
+    push("Tolerance", formatMoney(rule.config.toleranceUsd));
+  } else if (typeof rule?.config.tolerancePct === "number") {
+    push("Tolerance", `${(rule.config.tolerancePct * 100).toFixed(2)}%`);
+  }
+  return rows;
+}
+
+/**
+ * The detected document type, or null while it is still unknown. Classification
+ * runs during indexing, so the stored category is a placeholder until the
+ * document reaches "ready" and is the detected type from then on.
+ */
+function detectedDocumentCategory(document: MayoClientDocument): string | null {
+  return document.status === "ready" ? document.category : null;
 }
 
 function statusBadgeVariant(status: string) {
@@ -180,33 +321,362 @@ function uploadToResumableUrl(input: {
 }
 
 export function MayoCaseWorkspace({ caseId }: { caseId: string }) {
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<WorkspaceTab>("documents");
+  const [showMore, setShowMore] = useState(false);
+  const [confirmingCaseDelete, setConfirmingCaseDelete] = useState(false);
+  const [deletingCase, setDeletingCase] = useState(false);
+  /**
+   * Polling is state-driven rather than derived inline, so that starting the
+   * pipeline re-renders with a live interval. A value computed from the hook's
+   * own data cannot restart polling once it has settled on zero.
+   */
+  const [shouldPoll, setShouldPoll] = useState(false);
   const { data, error, isLoading, mutate } = useSWR<MayoCaseSnapshot>(
     `${basePath}/api/mayo/cases/${caseId}`,
     fetcher,
-    { refreshInterval: 3000 }
+    {
+      refreshInterval: shouldPoll ? POLL_INTERVAL_MS : 0,
+      // The chain has to keep advancing even when the tab is not in front.
+      refreshWhenHidden: true,
+    }
   );
-  const pendingOperations = useMemo(
-    () =>
-      Boolean(
-        data?.documents.some((document) =>
-          ["uploading", "uploaded", "indexing"].includes(document.status)
-        ) ||
-          data?.extractions.some((extraction) =>
-            ["pending", "processing"].includes(extraction.status)
-          ) ||
-          data?.reviewRuns.some((run) =>
-            ["queued", "running"].includes(run.status)
-          ) ||
-          data?.comparisons.some((comparison) =>
-            ["queued", "running"].includes(comparison.status)
-          ) ||
-          data?.integrationSyncs.some((sync) =>
-            ["queued", "running"].includes(sync.status)
-          )
-      ),
-    [data]
+  const pendingOperations = useMemo(() => hasPendingOperations(data), [data]);
+
+  /**
+   * Drives the index -> extract -> review chain off the case snapshot poll.
+   *
+   * Scoped to documents uploaded in this browser session via queuedDocumentIds,
+   * so opening a case that already holds findings never starts a review.
+   *
+   * KNOWN LIMITATION: the chain only advances while the tab is open. Closing it
+   * mid-pipeline leaves documents indexed but unextracted. The durable home for
+   * this is server-side chaining from the document-complete handler.
+   */
+  const [queuedDocumentIds, setQueuedDocumentIds] = useState<string[]>([]);
+  const [failedUploadNames, setFailedUploadNames] = useState<string[]>([]);
+  const [failedExtractionIds, setFailedExtractionIds] = useState<string[]>([]);
+  const [batchConfirmed, setBatchConfirmed] = useState(false);
+  const requestedExtractionIds = useRef<Set<string>>(new Set());
+  const requestedReview = useRef(false);
+  const seenDocumentIds = useRef<Set<string>>(new Set());
+
+  /**
+   * Drop documents that have left the case, otherwise deleting one mid-batch
+   * leaves the batch permanently unsettled and polling forever. Only documents
+   * this workspace has actually seen in a snapshot are pruned: a freshly
+   * uploaded one has not appeared yet and must not be mistaken for deleted.
+   */
+  useEffect(() => {
+    if (!data) {
+      return;
+    }
+    for (const document of data.documents) {
+      seenDocumentIds.current.add(document.id);
+    }
+    setQueuedDocumentIds((current) => {
+      const next = current.filter(
+        (id) =>
+          !seenDocumentIds.current.has(id) ||
+          data.documents.some((document) => document.id === id)
+      );
+      return next.length === current.length ? current : next;
+    });
+  }, [data]);
+
+  const queueUploadedDocuments = useCallback(
+    (documentIds: string[], failedNames: string[]) => {
+      requestedReview.current = false;
+      setBatchConfirmed(false);
+      setFailedUploadNames(failedNames);
+      setQueuedDocumentIds((current) => [
+        ...new Set([...current, ...documentIds]),
+      ]);
+    },
+    []
   );
+
+  const startReview = useCallback(async () => {
+    try {
+      await apiRequest(`/api/mayo/cases/${caseId}/reviews`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      toast.success("Review queued");
+      setActiveTab("findings");
+      await mutate();
+    } catch (reviewError) {
+      toast.error(
+        reviewError instanceof Error
+          ? reviewError.message
+          : "Unable to start review"
+      );
+    }
+  }, [caseId, mutate]);
+
+  /**
+   * A review is a chargeable model call over the whole case, so it only starts on
+   * its own when the batch came through cleanly. If anything failed, the reviewer
+   * decides: add the missing documents to this batch, or review what is here.
+   */
+  const batchState = useMemo(() => {
+    if (!data || queuedDocumentIds.length === 0) {
+      return { working: false, failed: false, clean: false };
+    }
+    const queued = data.documents.filter((document) =>
+      queuedDocumentIds.includes(document.id)
+    );
+    const extractionFor = (documentId: string) =>
+      data.extractions.find(
+        (extraction) => extraction.documentId === documentId
+      );
+
+    const working =
+      queued.length !== queuedDocumentIds.length ||
+      queued.some((document) => {
+        if (
+          document.status === "failed" ||
+          failedExtractionIds.includes(document.id)
+        ) {
+          return false;
+        }
+        if (document.status !== "ready") {
+          return true;
+        }
+        const extraction = extractionFor(document.id);
+        return (
+          !extraction || ["pending", "processing"].includes(extraction.status)
+        );
+      });
+
+    const failed =
+      failedUploadNames.length > 0 ||
+      queued.some(
+        (document) =>
+          document.status === "failed" ||
+          failedExtractionIds.includes(document.id) ||
+          extractionFor(document.id)?.status === "failed"
+      );
+
+    return { working, failed, clean: !(working || failed) };
+  }, [data, queuedDocumentIds, failedUploadNames, failedExtractionIds]);
+
+  // Keep polling while anything is moving, and while the batch is still working,
+  // otherwise the client never learns that indexing finished. Stop once the batch
+  // has stalled on a failure, so a blocked case does not poll forever.
+  useEffect(() => {
+    setShouldPoll(
+      hasPendingOperations(data) || (batchState.working && batchConfirmed)
+    );
+  }, [data, batchState.working, batchConfirmed]);
+
+  /**
+   * Documents that have been read and classified but not yet extracted.
+   *
+   * Derived from the case itself rather than from what this browser session
+   * uploaded, so the checkpoint survives a reload. Leaving the page mid-batch
+   * used to strand the documents with no way to confirm or correct them.
+   */
+  const unconfirmedDocuments = useMemo(() => {
+    if (!data) {
+      return [];
+    }
+    return data.documents.filter(
+      (document) =>
+        document.status === "ready" &&
+        !data.extractions.some(
+          (extraction) => extraction.documentId === document.id
+        )
+    );
+  }, [data]);
+
+  const awaitingConfirmation =
+    !batchConfirmed &&
+    unconfirmedDocuments.length > 0 &&
+    !data?.reviewRuns.some((run) => ["queued", "running"].includes(run.status));
+
+  useEffect(() => {
+    if (!data || !batchConfirmed) {
+      return;
+    }
+    for (const document of unconfirmedDocuments) {
+      if (requestedExtractionIds.current.has(document.id)) {
+        continue;
+      }
+      requestedExtractionIds.current.add(document.id);
+      apiRequest(`/api/mayo/cases/${caseId}/documents/${document.id}/extract`, {
+        method: "POST",
+      })
+        .then(() => mutate())
+        .catch((extractError) => {
+          // A request that fails outright leaves no extraction row behind, so
+          // record it here or the batch waits on a document that will never
+          // settle.
+          setFailedExtractionIds((current) => [
+            ...new Set([...current, document.id]),
+          ]);
+          toast.error(
+            extractError instanceof Error
+              ? extractError.message
+              : `Unable to read ${document.originalFilename}`
+          );
+        });
+    }
+  }, [caseId, data, mutate, batchConfirmed, unconfirmedDocuments]);
+
+  /**
+   * Documents have been extracted since the last review ran, so the findings on
+   * screen no longer reflect the case.
+   *
+   * Derived from the case rather than from this session, so reloading the page
+   * mid-flow cannot strand a case with no way to produce findings.
+   */
+  const needsReview = useMemo(() => {
+    if (!data) {
+      return false;
+    }
+    const ready = data.documents.filter(
+      (document) => document.status === "ready"
+    );
+    if (ready.length === 0) {
+      return false;
+    }
+    const settled = ready.every((document) =>
+      data.extractions.some(
+        (extraction) =>
+          extraction.documentId === document.id &&
+          !["pending", "processing"].includes(extraction.status)
+      )
+    );
+    if (!settled) {
+      return false;
+    }
+    if (
+      data.reviewRuns.some((run) => ["queued", "running"].includes(run.status))
+    ) {
+      return false;
+    }
+    const newestExtraction = Math.max(
+      ...data.extractions.map((extraction) =>
+        new Date(extraction.updatedAt).getTime()
+      )
+    );
+    const newestReview = data.reviewRuns.length
+      ? Math.max(
+          ...data.reviewRuns.map((run) => new Date(run.createdAt).getTime())
+        )
+      : 0;
+    return newestExtraction > newestReview;
+  }, [data]);
+
+  useEffect(() => {
+    if (!(batchConfirmed && needsReview) || requestedReview.current) {
+      return;
+    }
+    requestedReview.current = true;
+    startReview();
+  }, [batchConfirmed, needsReview, startReview]);
+
+  /**
+   * A draft and a final of the same payment application, not yet compared.
+   *
+   * Offered rather than run: a comparison is a chargeable call over two whole
+   * documents, so the reviewer decides. A comparison answers which findings the
+   * contractor fixed, so it is only worth offering once both documents have been
+   * read and the findings on screen cover them both. Waiting for the extractions
+   * also keeps the offer from competing with the confirmation checkpoint, where
+   * the stages are still being corrected.
+   */
+  const comparisonSuggestion = useMemo(() => {
+    if (
+      !data ||
+      needsReview ||
+      data.reviewRuns.some((run) => ["queued", "running"].includes(run.status))
+    ) {
+      return null;
+    }
+    const extractionFor = (documentId: string) =>
+      data.extractions.find(
+        (extraction) => extraction.documentId === documentId
+      );
+    const payApplications = data.documents.filter(
+      (document) =>
+        document.status === "ready" &&
+        document.category === "pay_application" &&
+        ["completed", "needs_review"].includes(
+          extractionFor(document.id)?.status ?? ""
+        )
+    );
+    const drafts = payApplications.filter((d) => d.stage === "draft");
+    const finals = payApplications.filter((d) => d.stage === "final");
+    if (drafts.length !== 1 || finals.length !== 1) {
+      return null;
+    }
+    const [draft] = drafts;
+    const [final] = finals;
+    const alreadyCompared = data.comparisons.some(
+      (comparison) =>
+        comparison.draftDocumentId === draft.id &&
+        comparison.finalDocumentId === final.id
+    );
+    if (alreadyCompared) {
+      return null;
+    }
+    const draftNumber = extractionFor(draft.id)?.data?.applicationNumber ?? null;
+    const finalNumber = extractionFor(final.id)?.data?.applicationNumber ?? null;
+    return {
+      draft,
+      final,
+      applicationNumber:
+        draftNumber && draftNumber === finalNumber ? draftNumber : null,
+    };
+  }, [data, needsReview]);
+
+  const runComparison = useCallback(async () => {
+    if (!comparisonSuggestion) {
+      return;
+    }
+    try {
+      await apiRequest(`/api/mayo/cases/${caseId}/comparisons`, {
+        method: "POST",
+        body: JSON.stringify({
+          draftDocumentId: comparisonSuggestion.draft.id,
+          finalDocumentId: comparisonSuggestion.final.id,
+        }),
+      });
+      setActiveTab("comparison");
+      await mutate();
+    } catch (comparisonError) {
+      toast.error(
+        comparisonError instanceof Error
+          ? comparisonError.message
+          : "Unable to start the comparison"
+      );
+    }
+  }, [caseId, comparisonSuggestion, mutate]);
+
+  const deleteCase = useCallback(async () => {
+    setDeletingCase(true);
+    try {
+      await apiRequest(`/api/mayo/cases/${caseId}`, { method: "DELETE" });
+      toast.success("Case deleted");
+      router.push("/mayo");
+    } catch (deleteError) {
+      setDeletingCase(false);
+      toast.error(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Unable to delete this case"
+      );
+    }
+  }, [caseId, router]);
+
+  const reviewAnyway = useCallback(() => {
+    requestedReview.current = true;
+    setFailedUploadNames([]);
+    setFailedExtractionIds([]);
+    startReview();
+  }, [startReview]);
 
   if (isLoading) {
     return (
@@ -242,24 +712,6 @@ export function MayoCaseWorkspace({ caseId }: { caseId: string }) {
     (finding) => finding.status === "open"
   ).length;
 
-  async function startReview() {
-    try {
-      await apiRequest(`/api/mayo/cases/${caseId}/reviews`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      });
-      toast.success("Review queued");
-      setActiveTab("findings");
-      await mutate();
-    } catch (reviewError) {
-      toast.error(
-        reviewError instanceof Error
-          ? reviewError.message
-          : "Unable to start review"
-      );
-    }
-  }
-
   return (
     <main className="min-h-dvh bg-background">
       <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur">
@@ -291,33 +743,86 @@ export function MayoCaseWorkspace({ caseId }: { caseId: string }) {
                 Processing
               </span>
             ) : null}
-            <Button disabled={readyDocumentCount === 0} onClick={startReview}>
-              <PlayIcon />
-              Run review
-            </Button>
+            {/* Offered whenever the findings are out of date with the
+                documents. In the normal flow the pipeline has already done this
+                and the button never appears; after a reload, or on a case
+                reopened later, it is the way back in. */}
+            {needsReview ? (
+              <Button onClick={startReview} variant="outline">
+                <PlayIcon />
+                Run review
+              </Button>
+            ) : null}
+            {data.membership.role === "owner" ? (
+              <Button
+                onClick={() => setConfirmingCaseDelete(true)}
+                size="icon-sm"
+                variant="ghost"
+              >
+                <Trash2Icon />
+                <span className="sr-only">Delete this case</span>
+              </Button>
+            ) : null}
           </div>
         </div>
       </header>
 
       <div className="mx-auto max-w-[1500px] space-y-6 px-5 py-6">
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <Metric
-            label="Indexed documents"
-            value={`${readyDocumentCount}/${data.documents.length}`}
+        {awaitingConfirmation ? (
+          <ConfirmBatch
+            caseId={caseId}
+            documents={unconfirmedDocuments}
+            mutate={mutate}
+            onConfirm={() => setBatchConfirmed(true)}
           />
-          <Metric label="Open findings" value={String(openFindingCount)} />
-          <Metric
-            label="Latest review"
-            value={latestRun?.status.replace("_", " ") ?? "Not run"}
-          />
-          <Metric
-            label="OpenAI knowledge base"
-            value={data.case.openaiVectorStoreId ? "Ready" : "Not created"}
-          />
-        </section>
+        ) : null}
 
-        <nav className="flex gap-1 overflow-x-auto rounded-xl border bg-muted/20 p-1">
-          {tabs.map((tab) => {
+        {comparisonSuggestion ? (
+          <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-4">
+            <div className="min-w-0">
+              <p className="font-medium text-sm">
+                {comparisonSuggestion.applicationNumber
+                  ? `Payment application ${comparisonSuggestion.applicationNumber} has a draft and a final.`
+                  : "This case has a draft and a final of the same payment application."}
+              </p>
+              <p className="mt-1 text-muted-foreground text-sm">
+                Comparing them shows which of the findings the contractor
+                actually fixed.
+              </p>
+            </div>
+            <Button onClick={runComparison} size="sm">
+              <ScaleIcon />
+              Compare them
+            </Button>
+          </section>
+        ) : null}
+
+        {batchState.failed && !batchState.working ? (
+          <BatchNeedsAttention
+            failedUploadNames={failedUploadNames}
+            onReviewAnyway={reviewAnyway}
+            onShowDocuments={() => setActiveTab("documents")}
+          />
+        ) : null}
+
+        {pendingOperations ? (
+          <PipelineProgress data={data} />
+        ) : (
+          <section className="grid gap-3 sm:grid-cols-3">
+            <Metric
+              label="Documents ready"
+              value={`${readyDocumentCount}/${data.documents.length}`}
+            />
+            <Metric label="Open findings" value={String(openFindingCount)} />
+            <Metric
+              label="Latest review"
+              value={latestRun?.status.replace("_", " ") ?? "Not run"}
+            />
+          </section>
+        )}
+
+        <nav className="flex flex-wrap items-center gap-1 rounded-xl border bg-muted/20 p-1">
+          {primaryTabs.map((tab) => {
             const Icon = tab.icon;
             return (
               <button
@@ -341,6 +846,40 @@ export function MayoCaseWorkspace({ caseId }: { caseId: string }) {
               </button>
             );
           })}
+
+          <span className="mx-1 h-5 w-px shrink-0 bg-border" />
+
+          {secondaryTabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            if (!(showMore || active)) {
+              return null;
+            }
+            return (
+              <button
+                className={cn(
+                  "flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-sm transition",
+                  active
+                    ? "bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                type="button"
+              >
+                <Icon className="size-4" />
+                {tab.label}
+              </button>
+            );
+          })}
+
+          <button
+            className="flex shrink-0 items-center gap-2 rounded-lg px-3 py-2 text-muted-foreground text-sm transition hover:text-foreground"
+            onClick={() => setShowMore((current) => !current)}
+            type="button"
+          >
+            {showMore ? "Less" : "More"}
+          </button>
         </nav>
 
         {activeTab === "documents" ? (
@@ -348,13 +887,17 @@ export function MayoCaseWorkspace({ caseId }: { caseId: string }) {
             canDelete={["owner", "admin"].includes(data.membership.role)}
             caseId={caseId}
             documents={data.documents}
+            extractions={data.extractions}
             mutate={mutate}
+            onDocumentsQueued={queueUploadedDocuments}
+            onShowExtractions={() => setActiveTab("extractions")}
           />
         ) : null}
         {activeTab === "extractions" ? <ExtractionsPanel data={data} /> : null}
         {activeTab === "findings" ? (
           <FindingsPanel
             caseId={caseId}
+            data={data}
             findings={data.findings}
             latestRun={latestRun}
             mutate={mutate}
@@ -371,6 +914,42 @@ export function MayoCaseWorkspace({ caseId }: { caseId: string }) {
         ) : null}
         {activeTab === "audit" ? <AuditPanel data={data} /> : null}
       </div>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setConfirmingCaseDelete(false);
+          }
+        }}
+        open={confirmingCaseDelete}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this case?</DialogTitle>
+            <DialogDescription>
+              This permanently removes {data.case.name}, its{" "}
+              {data.documents.length} document
+              {data.documents.length === 1 ? "" : "s"}, every finding, and the
+              stored copies held for search. It cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button disabled={deletingCase} variant="outline">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              disabled={deletingCase}
+              onClick={deleteCase}
+              variant="destructive"
+            >
+              {deletingCase ? <LoaderIcon className="animate-spin" /> : null}
+              {deletingCase ? "Deleting…" : "Delete case"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
@@ -386,80 +965,341 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+const DOCUMENT_TYPES: MayoDocumentCategory[] = [
+  "contract",
+  "amendment",
+  "pay_application",
+  "invoice",
+  "change_order",
+  "prior_payment",
+  "supporting_document",
+  "other",
+];
+
+/**
+ * Type and submission for one document. Lives on the document card as well as
+ * in the checkpoint, so a misclassification can always be corrected rather than
+ * only during the moment the checkpoint happens to be on screen.
+ */
+function DocumentClassification({
+  caseId,
+  document,
+  mutate,
+}: {
+  caseId: string;
+  document: MayoClientDocument;
+  mutate: KeyedMutator<MayoCaseSnapshot>;
+}) {
+  /**
+   * The snapshot is updated before the request goes out, so the select, the badge
+   * beside the filename and the comparison offer all move together. Waiting on the
+   * round trip left the control saying one thing while the rest of the card still
+   * said another.
+   */
+  function update(patch: {
+    category?: MayoDocumentCategory;
+    stage?: MayoDocumentStage;
+  }) {
+    mutate(
+      (current) =>
+        current && {
+          ...current,
+          documents: current.documents.map((existing) =>
+            existing.id === document.id ? { ...existing, ...patch } : existing
+          ),
+        },
+      { revalidate: false }
+    );
+    apiRequest(`/api/mayo/cases/${caseId}/documents/${document.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    })
+      .catch((updateError) => {
+        toast.error(
+          updateError instanceof Error
+            ? updateError.message
+            : "Unable to update this document"
+        );
+      })
+      .finally(() => {
+        mutate();
+      });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <select
+        aria-label="Document type"
+        className="h-8 rounded-lg border bg-background px-2 text-sm"
+        onChange={(event) => {
+          // The submission is only ever asked of a pay application, so it is
+          // cleared along with the question rather than left behind as an answer
+          // to something no longer being asked.
+          const next = event.target.value as MayoDocumentCategory;
+          update(
+            next === "pay_application"
+              ? { category: next }
+              : { category: next, stage: "supporting" }
+          );
+        }}
+        value={document.category}
+      >
+        {DOCUMENT_TYPES.map((type) => (
+          <option key={type} value={type}>
+            {type.replaceAll("_", " ")}
+          </option>
+        ))}
+      </select>
+      {/* Only a pay application can be compared against a resubmission, so
+          nothing else is asked this question. */}
+      {document.category === "pay_application" ? (
+        <select
+          aria-label="Which submission"
+          className="h-8 rounded-lg border bg-background px-2 text-sm"
+          onChange={(event) =>
+            update({ stage: event.target.value as MayoDocumentStage })
+          }
+          value={document.stage}
+        >
+          <option value="supporting">Neither</option>
+          <option value="draft">Draft</option>
+          <option value="final">Final</option>
+        </select>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The one checkpoint in the flow. Reading and classifying a document is cheap;
+ * extracting every figure and reviewing the case is not. So the reviewer is
+ * asked to confirm what these documents are at the only point where correcting
+ * it costs nothing.
+ */
+function ConfirmBatch({
+  caseId,
+  documents,
+  mutate,
+  onConfirm,
+}: {
+  caseId: string;
+  documents: MayoClientDocument[];
+  mutate: KeyedMutator<MayoCaseSnapshot>;
+  onConfirm: () => void;
+}) {
+  const ready = documents.filter((document) => document.status === "ready");
+
+  return (
+    <section className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="font-medium text-sm">
+            Here is what Mayo found. Correct anything that looks wrong.
+          </p>
+          <p className="mt-1 text-muted-foreground text-sm">
+            Nothing has been charged yet. The review starts when you say so.
+          </p>
+        </div>
+        <Button onClick={onConfirm} size="sm">
+          <PlayIcon />
+          Looks right, start the review
+        </Button>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {ready.map((document) => (
+          <div
+            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border bg-background p-3"
+            key={document.id}
+          >
+            <p className="min-w-0 flex-1 truncate text-sm">
+              {document.originalFilename}
+            </p>
+            <DocumentClassification
+              caseId={caseId}
+              document={document}
+              mutate={mutate}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * Shown when part of a batch did not come through. The review is a chargeable
+ * call over the whole case, so it is deliberately not started automatically
+ * here: the reviewer either completes the batch or accepts the gap.
+ */
+function BatchNeedsAttention({
+  failedUploadNames,
+  onReviewAnyway,
+  onShowDocuments,
+}: {
+  failedUploadNames: string[];
+  onReviewAnyway: () => void;
+  onShowDocuments: () => void;
+}) {
+  return (
+    <section className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="font-medium text-sm">
+            Some documents did not come through
+          </p>
+          <p className="mt-1 text-muted-foreground text-sm">
+            {failedUploadNames.length > 0
+              ? `Could not add: ${failedUploadNames.join(", ")}. `
+              : ""}
+            The review has not started, so nothing has been charged yet. Add the
+            missing documents to this batch, or review what is here and accept
+            that those documents are not covered.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Button onClick={onShowDocuments} size="sm" variant="outline">
+            Add the missing documents
+          </Button>
+          <Button onClick={onReviewAnyway} size="sm">
+            <PlayIcon />
+            Review what is here
+          </Button>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Progress line shown in place of the metric tiles while the pipeline runs. */
+function PipelineProgress({ data }: { data: MayoCaseSnapshot }) {
+  const reading = data.documents.filter((document) =>
+    ["uploading", "uploaded", "indexing"].includes(document.status)
+  ).length;
+  const extracting = data.extractions.filter((extraction) =>
+    ["pending", "processing"].includes(extraction.status)
+  ).length;
+  const reviewing = data.reviewRuns.some((run) =>
+    ["queued", "running"].includes(run.status)
+  );
+
+  let message = "Working…";
+  if (reading > 0) {
+    message = `Reading ${reading} document${reading === 1 ? "" : "s"}…`;
+  } else if (extracting > 0) {
+    message = `Pulling out the figures from ${extracting} document${
+      extracting === 1 ? "" : "s"
+    }…`;
+  } else if (reviewing) {
+    message = "Checking the numbers against the rules…";
+  }
+
+  return (
+    <section className="flex items-center gap-3 rounded-xl border bg-card p-4">
+      <LoaderIcon className="size-4 shrink-0 animate-spin text-emerald-600" />
+      <div className="min-w-0">
+        <p className="font-medium text-sm">{message}</p>
+        <p className="text-muted-foreground text-xs">
+          This keeps going on its own. Findings appear when it finishes.
+        </p>
+      </div>
+    </section>
+  );
+}
+
 function DocumentsPanel({
   canDelete,
   caseId,
   documents,
+  extractions,
   mutate,
+  onDocumentsQueued,
+  onShowExtractions,
 }: {
   canDelete: boolean;
   caseId: string;
   documents: MayoClientDocument[];
-  mutate: () => Promise<unknown>;
+  extractions: MayoCaseSnapshot["extractions"];
+  mutate: KeyedMutator<MayoCaseSnapshot>;
+  onDocumentsQueued: (documentIds: string[], failedNames: string[]) => void;
+  onShowExtractions: () => void;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [category, setCategory] =
-    useState<MayoDocumentCategory>("pay_application");
-  const [stage, setStage] = useState<MayoDocumentStage>("supporting");
-  const [paymentApplicationNumber, setPaymentApplicationNumber] = useState("");
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
+  const [uploadingName, setUploadingName] = useState("");
+  const [deleting, setDeleting] = useState(false);
   const [documentPendingDeletion, setDocumentPendingDeletion] =
     useState<MayoClientDocument | null>(null);
 
-  async function uploadDocument(event: React.FormEvent) {
+  async function uploadDocuments(event: React.FormEvent) {
     event.preventDefault();
-    const file = fileInputRef.current?.files?.[0];
-    if (!file) {
-      toast.error("Choose a document");
+    const files = Array.from(fileInputRef.current?.files ?? []);
+    if (files.length === 0) {
+      toast.error("Choose at least one document");
       return;
     }
 
     setUploading(true);
-    setProgress(0);
-    try {
-      const mimeType = inferMayoMimeType(file);
-      const initiated = await apiRequest<{
-        document: MayoClientDocument;
-        uploadUrl: string;
-      }>(`/api/mayo/cases/${caseId}/documents/uploads`, {
-        method: "POST",
-        body: JSON.stringify({
-          filename: file.name,
-          mimeType,
-          sizeBytes: file.size,
-          category,
-          stage,
-          revision: 1,
-          paymentApplicationNumber: paymentApplicationNumber || undefined,
-        }),
-      });
-      await uploadToResumableUrl({
-        url: initiated.uploadUrl,
-        file,
-        mimeType,
-        onProgress: setProgress,
-      });
-      await apiRequest(
-        `/api/mayo/cases/${caseId}/documents/${initiated.document.id}/complete`,
-        { method: "POST" }
-      );
-      toast.success("Upload complete; OpenAI indexing started");
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      setPaymentApplicationNumber("");
-      await mutate();
-    } catch (uploadError) {
-      toast.error(
-        uploadError instanceof Error
-          ? uploadError.message
-          : "Unable to upload document"
-      );
-    } finally {
-      setUploading(false);
+    const uploadedIds: string[] = [];
+    const failed: string[] = [];
+
+    // One rejected document must not discard the rest of the packet.
+    for (const file of files) {
+      setUploadingName(file.name);
       setProgress(0);
+      try {
+        const mimeType = inferMayoMimeType(file);
+        const initiated = await apiRequest<{
+          document: MayoClientDocument;
+          uploadUrl: string;
+        }>(`/api/mayo/cases/${caseId}/documents/uploads`, {
+          method: "POST",
+          body: JSON.stringify({
+            filename: file.name,
+            mimeType,
+            sizeBytes: file.size,
+            category: DEFAULT_UPLOAD_CATEGORY,
+          }),
+        });
+        await uploadToResumableUrl({
+          url: initiated.uploadUrl,
+          file,
+          mimeType,
+          onProgress: setProgress,
+        });
+        await apiRequest(
+          `/api/mayo/cases/${caseId}/documents/${initiated.document.id}/complete`,
+          { method: "POST" }
+        );
+        uploadedIds.push(initiated.document.id);
+      } catch {
+        failed.push(file.name);
+      }
     }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+    onDocumentsQueued(uploadedIds, failed);
+    if (uploadedIds.length > 0) {
+      toast.success(
+        `${uploadedIds.length} document${
+          uploadedIds.length === 1 ? "" : "s"
+        } added. Reading them now.`
+      );
+    }
+    if (failed.length > 0) {
+      toast.error(
+        `Could not add ${failed.length} document${
+          failed.length === 1 ? "" : "s"
+        }: ${failed.join(", ")}`
+      );
+    }
+    await mutate();
+    setUploading(false);
+    setUploadingName("");
+    setProgress(0);
   }
 
   async function documentAction(
@@ -492,73 +1332,32 @@ function DocumentsPanel({
     <section className="grid gap-6 xl:grid-cols-[360px_1fr]">
       <form
         className="h-fit space-y-5 rounded-2xl border bg-card p-5"
-        onSubmit={uploadDocument}
+        onSubmit={uploadDocuments}
       >
         <div>
-          <h2 className="font-semibold">Add evidence</h2>
+          <h2 className="font-semibold">Add documents</h2>
           <p className="mt-1 text-muted-foreground text-sm">
-            Files remain private in GCS and are copied into this case&apos;s
-            OpenAI vector store.
+            Add the whole packet at once: the pay application, the contract,
+            change orders and any backup. Mayo works out what each one is and
+            reviews them for you.
           </p>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="mayo-file">Document</Label>
+          <Label htmlFor="mayo-file">Documents</Label>
           <Input
             accept=".pdf,.doc,.docx,.pptx,.txt,.md,.json"
             id="mayo-file"
+            multiple
             ref={fileInputRef}
             required
             type="file"
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="mayo-category">Category</Label>
-          <select
-            className="h-9 w-full rounded-lg border bg-background px-3 text-sm"
-            id="mayo-category"
-            onChange={(event) =>
-              setCategory(event.target.value as MayoDocumentCategory)
-            }
-            value={category}
-          >
-            {categories.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="mayo-stage">Stage</Label>
-          <select
-            className="h-9 w-full rounded-lg border bg-background px-3 text-sm"
-            id="mayo-stage"
-            onChange={(event) =>
-              setStage(event.target.value as MayoDocumentStage)
-            }
-            value={stage}
-          >
-            <option value="supporting">Supporting</option>
-            <option value="draft">Draft</option>
-            <option value="final">Final</option>
-          </select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="mayo-pay-app-number">Pay application number</Label>
-          <Input
-            id="mayo-pay-app-number"
-            onChange={(event) =>
-              setPaymentApplicationNumber(event.target.value)
-            }
-            placeholder="Optional"
-            value={paymentApplicationNumber}
-          />
-        </div>
         {uploading ? (
           <div className="space-y-2">
-            <div className="flex justify-between text-xs">
-              <span>Uploading to GCS</span>
-              <span>{progress}%</span>
+            <div className="flex justify-between gap-3 text-xs">
+              <span className="truncate">{uploadingName}</span>
+              <span className="shrink-0">{progress}%</span>
             </div>
             <div className="h-2 overflow-hidden rounded-full bg-muted">
               <div
@@ -574,7 +1373,7 @@ function DocumentsPanel({
           ) : (
             <CloudUploadIcon />
           )}
-          Upload evidence
+          Add documents
         </Button>
       </form>
 
@@ -603,17 +1402,30 @@ function DocumentsPanel({
                   <Badge variant={statusBadgeVariant(document.status)}>
                     {document.status}
                   </Badge>
-                  <Badge variant="outline">{document.stage}</Badge>
+                  {/* "supporting" is the default every document carries, so it
+                      is only worth showing once it means something. */}
+                  {document.stage === "supporting" ? null : (
+                    <Badge variant="outline">{document.stage}</Badge>
+                  )}
                 </div>
                 <p className="mt-1 text-muted-foreground text-xs">
-                  {document.category.replaceAll("_", " ")} ·{" "}
-                  {formatBytes(document.sizeBytes)} · revision{" "}
-                  {document.revision}
+                  {detectedDocumentCategory(document)?.replaceAll("_", " ") ??
+                    "Working out what this is…"}{" "}
+                  · {formatBytes(document.sizeBytes)}
                 </p>
                 {document.indexingError ? (
                   <p className="mt-1 text-destructive text-xs">
                     {document.indexingError}
                   </p>
+                ) : null}
+                {document.status === "ready" ? (
+                  <div className="mt-2">
+                    <DocumentClassification
+                      caseId={caseId}
+                      document={document}
+                      mutate={mutate}
+                    />
+                  </div>
                 ) : null}
               </div>
             </div>
@@ -629,13 +1441,34 @@ function DocumentsPanel({
                       Open source
                     </a>
                   </Button>
-                  <Button
-                    onClick={() => documentAction(document, "extract")}
-                    size="sm"
-                  >
-                    <FileCheck2Icon />
-                    Extract
-                  </Button>
+                  {needsManualExtraction(document, extractions) ? (
+                    <Button
+                      onClick={() => documentAction(document, "extract")}
+                      size="sm"
+                      variant="outline"
+                    >
+                      {extractionFailed(document, extractions) ? (
+                        <>
+                          <RefreshCwIcon />
+                          Try again
+                        </>
+                      ) : (
+                        <>
+                          <FileCheck2Icon />
+                          Extract
+                        </>
+                      )}
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={onShowExtractions}
+                      size="sm"
+                      variant="outline"
+                    >
+                      <DatabaseIcon />
+                      What Mayo read
+                    </Button>
+                  )}
                 </>
               ) : null}
               {document.status === "failed" ? (
@@ -684,15 +1517,19 @@ function DocumentsPanel({
               <Button variant="outline">Cancel</Button>
             </DialogClose>
             <Button
+              disabled={deleting}
               onClick={async () => {
                 if (documentPendingDeletion) {
+                  setDeleting(true);
                   await documentAction(documentPendingDeletion, "delete");
+                  setDeleting(false);
                   setDocumentPendingDeletion(null);
                 }
               }}
               variant="destructive"
             >
-              Delete document
+              {deleting ? <LoaderIcon className="animate-spin" /> : null}
+              {deleting ? "Deleting…" : "Delete document"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -855,18 +1692,56 @@ function ExtractionsPanel({ data }: { data: MayoCaseSnapshot }) {
   );
 }
 
+/**
+ * The numbers behind a deterministic finding. Shown on the finding itself so the
+ * reviewer can see what it was working from rather than taking the result on
+ * trust. Semantic findings rely on their quoted evidence instead.
+ */
+function FindingInputs({
+  finding,
+  snapshot,
+}: {
+  finding: MayoClientFinding;
+  snapshot: MayoCaseSnapshot;
+}) {
+  const rows = findingInputs(finding, snapshot);
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div className="mt-4 rounded-xl border bg-background p-4">
+      <p className="font-medium text-xs uppercase tracking-wide">
+        How this was worked out
+      </p>
+      <dl className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+        {rows.map((row) => (
+          <div className="flex justify-between gap-3 text-sm" key={row.label}>
+            <dt className="text-muted-foreground">{row.label}</dt>
+            <dd className="font-mono">{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
 function FindingsPanel({
   caseId,
+  data,
   findings,
   latestRun,
   mutate,
 }: {
   caseId: string;
+  data: MayoCaseSnapshot;
   findings: MayoClientFinding[];
   latestRun: MayoCaseSnapshot["reviewRuns"][number] | undefined;
   mutate: () => Promise<unknown>;
 }) {
   const [comments, setComments] = useState<Record<string, string>>({});
+  const decidedCount = findings.filter(
+    (finding) => finding.status !== "open"
+  ).length;
 
   async function updateFinding(
     finding: MayoClientFinding,
@@ -898,9 +1773,13 @@ function FindingsPanel({
         <div className="rounded-xl border bg-card p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="font-medium text-sm">Latest review</p>
+              <p className="font-medium text-sm">
+                {findings.length > 0
+                  ? `${decidedCount} of ${findings.length} findings reviewed`
+                  : "Latest review"}
+              </p>
               <p className="text-muted-foreground text-xs">
-                {latestRun.model} · {formatDate(latestRun.createdAt)}
+                {formatDate(latestRun.createdAt)}
               </p>
             </div>
             <Badge variant={statusBadgeVariant(latestRun.status)}>
@@ -943,7 +1822,10 @@ function FindingsPanel({
                 <Badge variant={statusBadgeVariant(finding.severity)}>
                   {finding.severity}
                 </Badge>
-                <Badge variant="outline">{finding.ruleCode}</Badge>
+                <Badge variant="outline">
+                  {data.rules.find((rule) => rule.code === finding.ruleCode)
+                    ?.name ?? finding.ruleCode}
+                </Badge>
                 <Badge variant={statusBadgeVariant(finding.status)}>
                   {finding.status}
                 </Badge>
@@ -962,6 +1844,8 @@ function FindingsPanel({
           <MessageResponse className="mt-4 text-sm">
             {finding.description}
           </MessageResponse>
+          <FindingInputs finding={finding} snapshot={data} />
+
           <div className="mt-4 rounded-xl bg-muted/30 p-4">
             <p className="font-medium text-xs uppercase tracking-wide">
               Recommendation
@@ -1012,13 +1896,15 @@ function FindingsPanel({
               value={comments[finding.id] ?? ""}
             />
             <div className="flex flex-wrap gap-2">
+              {/* Same three stored statuses, named for what the reviewer is
+                  actually deciding rather than for the state machine. */}
               <Button
                 onClick={() => updateFinding(finding, "accepted")}
                 size="sm"
                 variant="outline"
               >
                 <CheckCircle2Icon />
-                Accept finding
+                Agree, raise with contractor
               </Button>
               <Button
                 onClick={() => updateFinding(finding, "rejected")}
@@ -1026,7 +1912,7 @@ function FindingsPanel({
                 variant="outline"
               >
                 <XCircleIcon />
-                Reject finding
+                Not an issue
               </Button>
               <Button
                 onClick={() => updateFinding(finding, "resolved")}
@@ -1034,7 +1920,7 @@ function FindingsPanel({
                 variant="outline"
               >
                 <ShieldCheckIcon />
-                Mark resolved
+                Already dealt with
               </Button>
               {finding.status !== "open" ? (
                 <Button
@@ -1062,12 +1948,14 @@ function ComparisonPanel({
   data: MayoCaseSnapshot;
   mutate: () => Promise<unknown>;
 }) {
-  const drafts = data.documents.filter(
-    (document) => document.stage === "draft" && document.status === "ready"
+  // Only pay applications are asked which submission they are, so a document of
+  // any other type is carrying a leftover answer and is not half of a pair.
+  const comparable = data.documents.filter(
+    (document) =>
+      document.status === "ready" && document.category === "pay_application"
   );
-  const finals = data.documents.filter(
-    (document) => document.stage === "final" && document.status === "ready"
-  );
+  const drafts = comparable.filter((document) => document.stage === "draft");
+  const finals = comparable.filter((document) => document.stage === "final");
   const [draftDocumentId, setDraftDocumentId] = useState("");
   const [finalDocumentId, setFinalDocumentId] = useState("");
   const [submitting, setSubmitting] = useState(false);

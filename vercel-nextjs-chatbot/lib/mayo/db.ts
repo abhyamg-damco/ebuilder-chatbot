@@ -422,6 +422,22 @@ export async function claimMayoDocumentIndexing(
   return document ?? null;
 }
 
+export async function updateMayoDocumentMetadata(input: {
+  documentId: string;
+  category?: MayoDocumentCategory;
+  stage?: MayoDocumentStage;
+}): Promise<MayoDocument> {
+  const [document] = await useDb()
+    .update(mayoDocument)
+    .set({
+      ...(input.category !== undefined && { category: input.category }),
+      ...(input.stage !== undefined && { stage: input.stage }),
+    })
+    .where(eq(mayoDocument.id, input.documentId))
+    .returning();
+  return document;
+}
+
 export async function updateMayoDocumentIndexing(input: {
   documentId: string;
   status: "uploaded" | "indexing" | "ready" | "failed" | "deleted";

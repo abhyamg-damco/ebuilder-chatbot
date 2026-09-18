@@ -26,6 +26,11 @@ export const initiateMayoUploadSchema = z.object({
   paymentApplicationNumber: z.string().trim().max(100).optional(),
 });
 
+export const updateMayoDocumentSchema = z.object({
+  category: mayoDocumentCategorySchema.optional(),
+  stage: mayoDocumentStageSchema.optional(),
+});
+
 export const updateMayoFindingSchema = z.object({
   status: z.enum(["open", "accepted", "rejected", "resolved"]).optional(),
   assignedReviewerId: z.string().uuid().nullable().optional(),

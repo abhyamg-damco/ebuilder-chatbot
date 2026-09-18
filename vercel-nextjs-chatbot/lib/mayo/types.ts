@@ -59,6 +59,15 @@ export const mayoLineItemSchema = z
   })
   .strict();
 
+/**
+ * Classification is asked for on its own rather than as one field of the full
+ * extraction. Measured against the same documents, the type is reliable in
+ * isolation and unreliable when it competes with thirty other fields.
+ */
+export const mayoDocumentClassificationSchema = z
+  .object({ documentType: mayoDocumentCategorySchema })
+  .strict();
+
 export const mayoDocumentExtractionSchema = z
   .object({
     documentType: mayoDocumentCategorySchema,
@@ -184,4 +193,11 @@ export type MayoUsage = {
   inputTokens: number | null;
   outputTokens: number | null;
   totalTokens: number | null;
+  /**
+   * Reasoning tokens are billed as output but are invisible in the response
+   * text, and the resolved model can differ from the configured one when the
+   * configured value is an alias. Both are recorded so cost can be attributed.
+   */
+  reasoningTokens?: number | null;
+  resolvedModel?: string | null;
 };

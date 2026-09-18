@@ -24,7 +24,8 @@ function ChartArtifactContent({ content }: { content: string }) {
 
 export const chartArtifact = new Artifact<"chart", Metadata>({
   kind: "chart",
-  description: "Bar, line, or area charts for time series and comparisons",
+  description:
+    "Bar, ranked horizontal bar, line, or area charts for comparisons and trends",
   initialize: () => null,
   onStreamPart: ({ setArtifact, streamPart }) => {
     if (streamPart.type === "data-chartDelta") {

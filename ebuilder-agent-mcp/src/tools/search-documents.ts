@@ -4,9 +4,16 @@ import { toToolError, toToolResult } from "../api/client.js";
 import { searchProjects } from "../api/project-search.js";
 import { buildQueryParams, buildQueryPath } from "../api/resources.js";
 import { TOOL_GUIDES } from "../prompts/domain-guides.js";
+import {
+  invoiceNumberFilePattern,
+  normalizeDocument,
+} from "./document-normalize.js";
 import type { ToolRegistrar } from "./types.js";
 
 type JsonRecord = Record<string, unknown>;
+
+const DOCUMENT_AGENT_DIRECTIVE =
+  "NEVER fabricate document content. Call createDocument(file-preview) with fileUrl (downloadUrl), previewable:true, and metadata.fileId + metadata.fileName from the best match. The UI renders via /api/documents/render?fileId=...";
 
 function extractRecords(data: unknown): JsonRecord[] {
   if (!data || typeof data !== "object") {
@@ -21,36 +28,20 @@ function extractRecords(data: unknown): JsonRecord[] {
   );
 }
 
-function normalizeDocument(record: JsonRecord): JsonRecord {
-  const doc = (record.Document as JsonRecord | undefined) ?? record;
-  const fileName = String(doc.FileName ?? doc.fileName ?? "");
-  const fileId = String(doc.FileId ?? doc.fileId ?? "");
-  const documentType = String(doc.DocumentType ?? doc.documentType ?? "");
-  const fileDescription = String(
-    doc.FileDescription ?? doc.fileDescription ?? ""
-  );
-
-  return {
-    fileName,
-    fileId,
-    documentType,
-    fileDescription,
-    ref: fileId ? `Documents/${fileId}` : undefined,
-    previewPath: fileId ? `/api/documents/preview?fileId=${encodeURIComponent(fileId)}` : undefined,
-  };
-}
+export type SearchDocumentsInput = {
+  projectSearchTerm?: string;
+  fileNamePattern?: string;
+  invoiceNumber?: string;
+  documentType?: string;
+  limit?: number;
+};
 
 /**
- * Search e-Builder Documents and return metadata for file-preview artifacts.
+ * Search e-Builder Documents and return metadata with DownloadURL for file-preview artifacts.
  */
 export async function searchDocuments(
   client: EBuilderClient,
-  input: {
-    projectSearchTerm?: string;
-    fileNamePattern?: string;
-    documentType?: string;
-    limit?: number;
-  }
+  input: SearchDocumentsInput
 ): Promise<{
   status: "complete" | "partial" | "incomplete";
   documents: JsonRecord[];
@@ -61,6 +52,12 @@ export async function searchDocuments(
   const steps: string[] = [];
   const filters: Array<{ Field: string; Operation: string; Value: string }> =
     [];
+
+  const fileNamePattern =
+    input.fileNamePattern ??
+    (input.invoiceNumber
+      ? invoiceNumberFilePattern(input.invoiceNumber)
+      : undefined);
 
   if (input.projectSearchTerm) {
     steps.push(`resolve_project("${input.projectSearchTerm}")`);
@@ -81,13 +78,13 @@ export async function searchDocuments(
     }
   }
 
-  if (input.fileNamePattern) {
+  if (fileNamePattern) {
     filters.push({
       Field: "Document/FileName",
       Operation: "LIKE",
-      Value: input.fileNamePattern.includes("%")
-        ? input.fileNamePattern
-        : `%${input.fileNamePattern}%`,
+      Value: fileNamePattern.includes("%")
+        ? fileNamePattern
+        : `%${fileNamePattern}%`,
     });
   }
 
@@ -107,10 +104,10 @@ export async function searchDocuments(
       documents: [],
       stepsCompleted: steps,
       nextSteps: [
-        "Provide projectSearchTerm and/or fileNamePattern (e.g. invoice PDF name)",
+        "Provide projectSearchTerm and/or fileNamePattern or invoiceNumber",
       ],
       agentDirective:
-        "Ask the user for project and document name before searching Documents.",
+        "Ask the user for project and invoice/document name before searching Documents.",
     };
   }
 
@@ -125,6 +122,7 @@ export async function searchDocuments(
       "Document/FileId",
       "Document/FileDescription",
       "Document/FileSize",
+      "Document/DownloadURL",
       "Project/ProjectName",
     ],
     Filters: filters,
@@ -140,10 +138,11 @@ export async function searchDocuments(
       documents: [],
       stepsCompleted: steps,
       nextSteps: [
-        "Broaden fileNamePattern with LIKE wildcards",
+        "Broaden fileNamePattern with LIKE wildcards (e.g. %invoice%)",
         "Try discover_query_schema(Documents) for tenant field names",
       ],
-      agentDirective: "Retry with broader filters before telling user no documents exist.",
+      agentDirective:
+        "Retry with broader filters before telling user no documents exist.",
     };
   }
 
@@ -151,8 +150,7 @@ export async function searchDocuments(
     status: "complete",
     documents,
     stepsCompleted: steps,
-    agentDirective:
-      "Use the latest matching document previewPath as fileUrl in createDocument(file-preview). Include fileName and documentType in metadata.",
+    agentDirective: DOCUMENT_AGENT_DIRECTIVE,
   };
 }
 
@@ -173,6 +171,12 @@ export function registerSearchDocumentsTool(
           .string()
           .optional()
           .describe("LIKE pattern for Document/FileName (e.g. %invoice%)"),
+        invoiceNumber: z
+          .string()
+          .optional()
+          .describe(
+            "Invoice number — auto-builds fileNamePattern (e.g. 006 → %006%)"
+          ),
         documentType: z
           .string()
           .optional()
@@ -191,6 +195,7 @@ export function registerSearchDocumentsTool(
         const result = await searchDocuments(client, {
           projectSearchTerm: args.projectSearchTerm as string | undefined,
           fileNamePattern: args.fileNamePattern as string | undefined,
+          invoiceNumber: args.invoiceNumber as string | undefined,
           documentType: args.documentType as string | undefined,
           limit: args.limit as number | undefined,
         });

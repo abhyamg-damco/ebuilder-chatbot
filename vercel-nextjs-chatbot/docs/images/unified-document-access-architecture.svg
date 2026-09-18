@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" role="img" aria-labelledby="title desc">
+  <title id="title">Unified Document Access Architecture</title>
+  <desc id="desc">Data flow from document sources through chatbot pipeline to AI agent</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#eef2ff"/>
+    </linearGradient>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#0f172a" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="640" fill="url(#bg)"/>
+  <text x="600" y="42" text-anchor="middle" font-family="system-ui,sans-serif" font-size="28" font-weight="700" fill="#0f172a">Unified Document Access Architecture</text>
+  <text x="600" y="68" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="#475569">Chat uploads (GCS) + e-Builder linked documents ’ shared extract pipeline ’ agent context</text>
+
+  <!-- Column backgrounds -->
+  <rect x="40" y="100" width="320" height="500" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+  <rect x="400" y="100" width="400" height="500" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+  <rect x="840" y="100" width="320" height="500" rx="16" fill="#ffffff" stroke="#cbd5e1"/>
+
+  <text x="200" y="130" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" font-weight="700" fill="#1e293b">Document Sources</text>
+  <text x="600" y="130" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" font-weight="700" fill="#1e293b">Chatbot Pipeline</text>
+  <text x="1000" y="130" text-anchor="middle" font-family="system-ui,sans-serif" font-size="16" font-weight="700" fill="#1e293b">AI Agent</text>
+
+  <!-- Source boxes -->
+  <g filter="url(#shadow)">
+    <rect x="70" y="170" width="260" height="56" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="200" y="203" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="#1e3a8a">GCS chat upload</text>
+
+    <rect x="70" y="250" width="260" height="56" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="200" y="283" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="#1e3a8a">e-Builder fileId</text>
+
+    <rect x="70" y="330" width="260" height="56" rx="10" fill="#dbeafe" stroke="#2563eb"/>
+    <text x="200" y="363" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" fill="#1e3a8a">Signed downloadUrl</text>
+
+    <rect x="70" y="420" width="260" height="72" rx="10" fill="#e0e7ff" stroke="#4f46e5"/>
+    <text x="200" y="448" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" font-weight="600" fill="#312e81">ebuilder-agent-mcp</text>
+    <text x="200" y="470" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" fill="#4338ca">search_documents · get_invoice_document</text>
+  </g>
+
+  <!-- Pipeline boxes -->
+  <g filter="url(#shadow)">
+    <rect x="430" y="160" width="340" height="48" rx="10" fill="#ccfbf1" stroke="#0d9488"/>
+    <text x="600" y="190" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" fill="#115e59">normalizeToolOutput (MCP envelope unwrap)</text>
+
+    <rect x="430" y="225" width="340" height="48" rx="10" fill="#ccfbf1" stroke="#0d9488"/>
+    <text x="600" y="255" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" fill="#115e59">collectLinkedDocumentRefs</text>
+
+    <rect x="430" y="290" width="340" height="48" rx="10" fill="#ccfbf1" stroke="#0d9488"/>
+    <text x="600" y="320" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" fill="#115e59">fetchEBuilderDocumentByFileId / ByDownloadUrl</text>
+
+    <rect x="430" y="355" width="340" height="48" rx="10" fill="#ccfbf1" stroke="#0d9488"/>
+    <text x="600" y="385" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" fill="#115e59">extractTextPreview (PDF · DOCX · XLSX)</text>
+
+    <rect x="430" y="420" width="340" height="48" rx="10" fill="#ccfbf1" stroke="#0d9488"/>
+    <text x="600" y="450" text-anchor="middle" font-family="system-ui,sans-serif" font-size="13" fill="#115e59">Request cache + onStepFinish prefetch</text>
+
+    <rect x="430" y="485" width="165" height="48" rx="10" fill="#fef3c7" stroke="#d97706"/>
+    <text x="512" y="515" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" fill="#92400e">linkedDocumentsPrompt</text>
+
+    <rect x="605" y="485" width="165" height="48" rx="10" fill="#fef3c7" stroke="#d97706"/>
+    <text x="687" y="515" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" fill="#92400e">getLinkedDocuments</text>
+  </g>
+
+  <!-- Agent boxes -->
+  <g filter="url(#shadow)">
+    <rect x="870" y="220" width="260" height="72" rx="10" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="1000" y="252" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="600" fill="#14532d">Document Q&amp;A</text>
+    <text x="1000" y="274" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" fill="#166534">Answers from extracted text</text>
+
+    <rect x="870" y="330" width="260" height="72" rx="10" fill="#dcfce7" stroke="#16a34a"/>
+    <text x="1000" y="362" text-anchor="middle" font-family="system-ui,sans-serif" font-size="14" font-weight="600" fill="#14532d">file-preview artifact</text>
+    <text x="1000" y="384" text-anchor="middle" font-family="system-ui,sans-serif" font-size="12" fill="#166534">/api/documents/render (UI only)</text>
+  </g>
+
+  <!-- Arrows -->
+  <g stroke="#64748b" stroke-width="2" fill="none" marker-end="url(#arrow)">
+    <path d="M330 198 L400 198"/>
+    <path d="M330 278 L400 310"/>
+    <path d="M330 358 L400 310"/>
+    <path d="M330 456 L400 184"/>
+    <path d="M770 510 L840 256"/>
+    <path d="M770 530 L840 366"/>
+  </g>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/>
+    </marker>
+  </defs>
+</svg>

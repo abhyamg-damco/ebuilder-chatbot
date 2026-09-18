@@ -75,8 +75,8 @@ export const TOOL_EXPRESSIONS = {
 
   resolve_project: {
     apiPath:
-      "POST /api/v2/Projects/Query (multi-strategy: ProjectName, CustomFields/Project ID)",
-    exampleArgs: { searchTerm: "ESRI 005", maxResults: 10 },
+      "POST /api/v2/Projects/Query (voice-normalized multi-strategy: ProjectName, UrlSafeName, CustomFields/Project ID)",
+    exampleArgs: { searchTerm: "E. SRI 00. 6A", maxResults: 10 },
   },
 
   resolve_company: {
@@ -159,8 +159,19 @@ export const TOOL_EXPRESSIONS = {
     exampleArgs: {
       projectSearchTerm: "Tower",
       fileNamePattern: "%invoice%",
+      invoiceNumber: "006",
       documentType: "PDF",
       limit: 20,
+    },
+  },
+
+  get_invoice_document: {
+    apiPath:
+      "Orchestrates: resolve_project → CommitmentInvoices Query → Documents Query (DownloadURL)",
+    exampleArgs: {
+      invoiceNumber: "006",
+      projectSearchTerm: "Tower",
+      limit: 10,
     },
   },
 } as const satisfies Record<string, ToolExpression>;
@@ -261,6 +272,7 @@ export const QUERY_RECORDS_BY_RESOURCE: Record<string, Record<string, unknown>> 
           "Document/FileName",
           "Document/DocumentType",
           "Document/FileId",
+          "Document/DownloadURL",
           "Project/ProjectName",
         ],
         Filters: [

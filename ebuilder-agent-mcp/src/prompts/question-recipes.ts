@@ -21,6 +21,8 @@ export const QUESTION_RECIPES = `
 | Invoices for {month}/{project} | discover_query_schema(CommitmentInvoices or GeneralInvoices) → query_records | dashboard |
 | Spend by month graph | query_records(invoices/cashflows) → aggregate_records(groupByMonth, scaleDivisor=1e6) | **chart** |
 | Invoice image for {vendor} | search_documents(fileNamePattern) OR query_records → search_documents | **file-preview** |
+| Show/open invoice PDF for #{n} on {project} | **get_invoice_document** | **file-preview** |
+| Invoice attachment / document URL | get_invoice_document OR search_documents | **file-preview** |
 | Pending invoice budget impact | discover_query_schema(CommitmentInvoiceProcesses) → query_processes | dashboard |
 | Approval queue for {user} | discover_query_schema(CommitmentInvoiceProcesses) → query_processes filter assignee | sheet |
 | Retainage balance | discover_query_schema(CommitmentInvoices) → query_records → aggregate | **dashboard** |

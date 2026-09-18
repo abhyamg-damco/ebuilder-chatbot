@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  FileSearchIcon,
   MessageSquareIcon,
   PanelLeftIcon,
   PenSquareIcon,
@@ -115,6 +116,18 @@ export function AppSidebar({ user }: { user: User | undefined }) {
                   >
                     <PenSquareIcon className="size-4" />
                     <span className="font-medium">New chat</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    className="h-8 rounded-lg border border-emerald-500/20 text-[13px] text-sidebar-foreground/70 transition-colors duration-150 hover:bg-emerald-500/10 hover:text-sidebar-foreground"
+                    tooltip="Mayo OneAgent"
+                  >
+                    <Link href="/mayo" onClick={() => setOpenMobile(false)}>
+                      <FileSearchIcon className="size-4 text-emerald-600" />
+                      <span className="font-medium">Mayo OneAgent</span>
+                    </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 {user && (

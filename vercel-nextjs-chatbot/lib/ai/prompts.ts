@@ -1,7 +1,9 @@
 import type { Geo } from "@vercel/functions";
 import type { ArtifactKind } from "@/components/chat/artifact";
+import { linkedDocumentsPrompt } from "@/lib/ai/prompts-linked-documents";
 import { chatUploadsPrompt } from "@/lib/ai/prompts-uploads";
 import type { UploadAccessInfo } from "@/lib/chat/uploads";
+import type { DocumentAccessInfo } from "@/lib/documents/access";
 import type { ChatSessionType } from "@/lib/db/schema";
 import { invoiceReviewPrompt } from "@/lib/invoice-review/prompts";
 import type { InvoiceReviewConfig } from "@/lib/invoice-review/types";
@@ -80,7 +82,13 @@ For "what is original budget on {project}": call get_original_budget first, or c
 export const ivyInsightsPrompt = `
 ## Ivy Insights (ACTIVE — MCP data visualization)
 
-When MCP tools return structured e-Builder data, finish with a **visual artifact** via createDocument. Do NOT paste large tables or charts as markdown in chat.
+When MCP tools return structured e-Builder data, you MUST finish by calling createDocument. This is a required step, not a suggestion.
+
+- **Never answer with the rows themselves in chat.** A numbered or bulleted list of records is the artifact's job, not the message's.
+- **Never offer to build one.** "If you want, I can put this into a dashboard" is a failure. Build it, then say where it is.
+- **Two or more records means an artifact**, however short the list looks.
+- **In CSV, wrap any value containing a comma or a quote in double quotes.** A vendor named \`Bulldog Sitework, LLC\` written bare adds a column, and every field after it lands under the wrong heading. Write \`"Bulldog Sitework, LLC"\`.
+- Your chat reply is one or two sentences pointing at the panel, and nothing else.
 
 ### Artifact selection
 | User intent | kind | content |
@@ -88,24 +96,70 @@ When MCP tools return structured e-Builder data, finish with a **visual artifact
 | Graph, trend, spend by month/year | chart | JSON: chartType, title, xKey, series[], data[], format.divideBy for millions |
 | Bid leveling, line lists, budget rows | sheet | CSV with headers in row 1 |
 | Top N, retainage, KPI summary | dashboard | JSON: title, kpis[], optional table, optional chart |
-| Invoice PDF/image, document preview | file-preview | JSON: title, fileUrl, contentType, metadata |
+| Invoice PDF/image, document preview | file-preview | JSON: title, fileUrl, contentType, previewable:true, metadata.fileId + metadata.fileName |
 | Single number or yes/no | (none) | Short chat text only |
+
+**Document preview (CRITICAL):** Call \`get_invoice_document\` or \`search_documents\` first. Copy **only** values from the tool response (\`bestMatch\` / document record) — NEVER use UUIDs or filenames from this prompt.
+
+- \`fileUrl\` = MCP \`bestMatch.fileUrl\` or \`downloadUrl\` (must be a real \`https://\` signed S3 URL)
+- \`fileId\` = MCP \`bestMatch.fileId\` (root and \`metadata.fileId\`)
+- \`metadata.fileName\` = MCP \`bestMatch.fileName\`
+- Do NOT use \`/api/documents/render\` as \`fileUrl\`; the UI builds the render URL from \`fileId\`
+
+**Document content Q&A:** When the user asks what a document **contains** (line items, totals, dates, vendor info), use extracted text from **Linked e-Builder documents** in the system prompt, or call \`getLinkedDocuments\` with \`fileId\` / \`downloadUrl\` from the latest MCP result. Do not claim you cannot access the file when text is available.
+
+\`\`\`json
+{
+  "title": "<invoice title from context>",
+  "fileUrl": "<bestMatch.fileUrl from MCP — must start with https://>",
+  "fileId": "<bestMatch.fileId from MCP only>",
+  "contentType": "<bestMatch.contentType from MCP>",
+  "previewable": true,
+  "metadata": {
+    "fileId": "<same bestMatch.fileId>",
+    "fileName": "<bestMatch.fileName from MCP>",
+    "source": "e-Builder Documents"
+  }
+}
+\`\`\`
 
 ### Workflow
 1. Complete MCP tool chain (schema → resolve → query → aggregate) until data is complete.
 2. Call **one** createDocument with the full JSON or CSV content.
 3. Reply in chat with 1–2 sentences pointing to the insight panel — never repeat the artifact body.
 
-### Chart JSON example (spend in millions)
+### Chart rules — the reader is non-technical
+
+- **\`chartType\`:** \`bar-horizontal\` for ranking things by a value, \`line\` or \`area\` over time, \`bar\` only for a few short category names. Names like "Curtis Gopher Tortoise Relocation Services" have nowhere to go on a horizontal axis.
+- **Always set \`format\`.** Money is \`"format": { "currency": "USD" }\`. Without it a figure renders as \`257134160\`.
+- **Send real values.** Do not pre-divide the numbers, \`format\` presents them.
+- **The title states the finding**, not the axes: "ABC Company accounts for 73% of invoiced value" beats "Invoice amounts by vendor". Put the dimensions in \`subtitle\`.
+- **One series needs no \`color\`.** The default is correct. Never use \`slate\`, it is the de-emphasis grey and reads as "no data".
+- **\`bar-horizontal\` sorts itself** descending. Do not reorder \`data\` by hand.
+
+### Chart JSON example (ranked, the common case)
 \`\`\`json
 {
-  "chartType": "bar",
-  "title": "Program spend by month",
+  "chartType": "bar-horizontal",
+  "title": "ABC Company accounts for most invoiced value",
+  "subtitle": "Invoice totals by vendor, all projects",
+  "xKey": "vendor",
+  "series": [{ "key": "amount", "label": "Invoice total" }],
+  "data": [{ "vendor": "*ABC Company", "amount": 257134160.47 }],
+  "format": { "currency": "USD" }
+}
+\`\`\`
+
+### Chart JSON example (over time, in millions)
+\`\`\`json
+{
+  "chartType": "line",
+  "title": "Program spend climbed through 2025",
   "subtitle": "2023–2025, values in millions USD",
   "xKey": "month",
-  "series": [{ "key": "spend", "label": "Spend ($M)", "color": "sky" }],
+  "series": [{ "key": "spend", "label": "Spend ($M)" }],
   "data": [{ "month": "2023-01", "spend": 12500000 }],
-  "format": { "divideBy": 1000000, "valueSuffix": "M", "decimals": 1 }
+  "format": { "divideBy": 1000000, "valuePrefix": "$", "valueSuffix": "M", "decimals": 1 }
 }
 \`\`\`
 
@@ -269,6 +323,7 @@ export const systemPrompt = ({
   automationIntent = false,
   mcpInstructions = [],
   chatUploads = [],
+  linkedDocuments = [],
   activeSkills = [],
   activeSecrets = [],
   sessionType,
@@ -283,6 +338,7 @@ export const systemPrompt = ({
   automationIntent?: boolean;
   mcpInstructions?: string[];
   chatUploads?: UploadAccessInfo[];
+  linkedDocuments?: DocumentAccessInfo[];
   activeSkills?: ActiveAgentSkill[];
   activeSecrets?: ActiveUserSecret[];
   sessionType?: ChatSessionType | null;
@@ -314,6 +370,10 @@ export const systemPrompt = ({
       : "";
   const uploadsPrompt =
     chatUploads.length > 0 ? `\n\n${chatUploadsPrompt(chatUploads)}` : "";
+  const linkedDocsPrompt =
+    linkedDocuments.length > 0
+      ? `\n\n${linkedDocumentsPrompt(linkedDocuments)}`
+      : "";
   const invoiceAdvisorPrompt =
     sessionType === "invoice_review" && invoiceReviewConfig
       ? `\n\n${invoiceReviewPrompt(invoiceReviewConfig)}`
@@ -326,10 +386,10 @@ export const systemPrompt = ({
       : "";
 
   if (!supportsTools) {
-    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}`;
+    return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${linkedDocsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}`;
   }
 
-  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}\n\n${artifactsPrompt}`;
+  return `${regularPrompt}\n\n${requestPrompt}${mcpPrompt}${skillsPrompt}${secretsPrompt}${trimblePrompt}${browserPrompt}${intentPrompt}${uploadPrompt}${automationPrompt}${uploadsPrompt}${linkedDocsPrompt}${invoiceAdvisorPrompt}${ivyInsightsPromptBlock}\n\n${artifactsPrompt}`;
 };
 
 export const codePrompt = `

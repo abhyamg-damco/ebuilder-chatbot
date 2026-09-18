@@ -485,7 +485,9 @@ export function ToolJourneyCard({
             </div>
             <p className="mt-0.5 text-[13px] text-muted-foreground leading-snug">
               {isRunning ? (
-                <Shimmer duration={1.2}>{friendlyStatus ?? subtitle}</Shimmer>
+                <Shimmer as="span" duration={1.2}>
+                  {friendlyStatus ?? subtitle}
+                </Shimmer>
               ) : (
                 subtitle
               )}

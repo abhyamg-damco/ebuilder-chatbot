@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cleanFormFields, confirmationSentence, isValidWeeklyDate } from "../src/weekly-update.js";
+import { cleanFormFields, confirmationSentence, isValidWeeklyDate, isWriteProjectAllowed } from "../src/weekly-update.js";
 
 test("removes e-Builder HTML section artefacts but preserves ordinary form fields", () => {
   assert.deepEqual(cleanFormFields([
@@ -21,4 +21,10 @@ test("only accepts real ISO calendar dates", () => {
   assert.equal(isValidWeeklyDate("2026-10-23"), true);
   assert.equal(isValidWeeklyDate("10/23/2026"), false);
   assert.equal(isValidWeeklyDate("2026-02-30"), false);
+});
+
+test("an empty write allowlist permits every project while a populated list restricts writes", () => {
+  assert.equal(isWriteProjectAllowed([], "any-project"), true);
+  assert.equal(isWriteProjectAllowed(["project-a"], "project-a"), true);
+  assert.equal(isWriteProjectAllowed(["project-a"], "project-b"), false);
 });

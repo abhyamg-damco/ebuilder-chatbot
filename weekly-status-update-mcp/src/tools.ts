@@ -2,7 +2,7 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { AppConfig } from "./config.js";
 import { EBuilderClient } from "./client.js";
-import { cleanFormFields, confirmationSentence, isValidWeeklyDate, WEEKLY_UPDATE_FIELDS } from "./weekly-update.js";
+import { cleanFormFields, confirmationSentence, isValidWeeklyDate, isWriteProjectAllowed, WEEKLY_UPDATE_FIELDS } from "./weekly-update.js";
 
 type ApiResponse = { records?: unknown[]; details?: unknown[]; [key: string]: unknown };
 const valueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
@@ -24,7 +24,7 @@ function processQueryFilters(projectName: string, date?: string) {
 function toUsDate(iso: string): string { const [year, month, day] = iso.split("-"); return `${month}/${day}/${year}`; }
 function canWrite(config: AppConfig, projectId: string, confirmation: string, commentDate: string) {
   if (!config.writesEnabled) throw new Error("Writes are disabled. Set EBUILDER_WRITES_ENABLED=true only after a scratch-project verification.");
-  if (!config.allowedWriteProjectIds.includes(projectId)) throw new Error("This project is not in EBUILDER_ALLOWED_WRITE_PROJECT_IDS.");
+  if (!isWriteProjectAllowed(config.allowedWriteProjectIds, projectId)) throw new Error("This project is not in EBUILDER_ALLOWED_WRITE_PROJECT_IDS.");
   if (confirmation.trim() !== confirmationSentence(projectId, commentDate)) throw new Error("Confirmation sentence did not exactly match the prepared submission.");
 }
 
@@ -36,7 +36,9 @@ export function registerWeeklyUpdateTools(server: McpServer, client: EBuilderCli
   }, async ({ projectReference }) => {
     try {
       const data = await client.post<ApiResponse>("/api/v2/Projects/Query", {
-        SelectedFields: ["Project/ProjectId", "Project/ProjectName", "Project/PortalId", "Project/Status"],
+        // This tenant's Projects schema exposes PortalId, not ProjectId. PortalId matches
+        // ProcessInstances.dataFields.projectId and is the identifier used by this workflow.
+        SelectedFields: ["Project/ProjectName", "Project/PortalId", "Project/Status"],
         Filters: [{ Field: "Project/ProjectName", Operation: "LIKE", Value: `%${projectReference}%` }],
       }, { schema: false, pageNumber: 0, pageSize: 20 });
       return text({ status: data.records?.length ? "found" : "not_found", records: data.records ?? [], nextStep: "Ask the caller to choose one project if more than one record is returned." });

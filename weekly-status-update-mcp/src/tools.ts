@@ -96,7 +96,6 @@ export function registerWeeklyUpdateTools(server: McpServer, client: EBuilderCli
       const data = await client.post<ApiResponse>(`/api/v2/${config.processResource}/Query`, {
         SelectedFields: ["ProcessInstance/InstanceId", "ProcessInstance/InstanceCounter", "ProcessInstance/Subject", "ProcessInstance/Status", "ProcessInstance/CurrentStepName", "ProcessInstance/DateDue", "Project/ProjectName"],
         Filters: processQueryFilters(projectName, commentDate),
-        AdvancedScript: "orderby:[ProcessInstance/Subject],[ProcessInstance/InstanceId]",
       }, { processPrefix: config.processPrefix, schema: false, pageNumber: 0, pageSize: 100 });
       return toolSuccess("list_weekly_updates", { processPrefix: config.processPrefix, records: data.records ?? [], nextStep: "Call get_weekly_update_form for the single instance selected with the caller." }, { recordsFound: data.records?.length ?? 0 });
     } catch (error) { return apiError("list_weekly_updates", error); }

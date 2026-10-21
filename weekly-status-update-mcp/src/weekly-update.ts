@@ -22,6 +22,11 @@ export function confirmationSentence(projectId: string, commentDate: string): st
   return `I confirm submission of the weekly update for project ${projectId} dated ${commentDate}.`;
 }
 
+/** An empty allowlist is intentionally unrestricted; a non-empty list is restrictive. */
+export function isWriteProjectAllowed(allowedProjectIds: readonly string[], projectId: string): boolean {
+  return allowedProjectIds.length === 0 || allowedProjectIds.includes(projectId);
+}
+
 export function isValidWeeklyDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00Z`);

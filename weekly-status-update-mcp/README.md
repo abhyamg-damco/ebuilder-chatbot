@@ -16,7 +16,7 @@ It was built from the supplied process map, Loom, and UI screenshot. The workflo
 
 | Tool | Purpose | Writes? |
 |---|---|---|
-| `find_weekly_update_project` | Match a project from a spoken name | No |
+| `find_weekly_update_project` | Match a project from a spoken name (returns the tenant's `PortalId`) | No |
 | `list_weekly_updates` | List BWPUP instances for that project/date | No |
 | `get_weekly_update_form` | Get workflow state, comments, and form values | No |
 | `prepare_weekly_update_submission` | Validate/update summary and generate required confirmation | No |
@@ -26,7 +26,7 @@ It was built from the supplied process map, Loom, and UI screenshot. The workflo
 `submit_weekly_update` is a real API endpoint, but it is **disabled by default**. It rejects requests until all of these are true:
 
 1. `EBUILDER_WRITES_ENABLED=true`.
-2. The project's exact GUID is in `EBUILDER_ALLOWED_WRITE_PROJECT_IDS`.
+2. If `EBUILDER_ALLOWED_WRITE_PROJECT_IDS` is populated, the project's exact GUID is in that list. An empty list permits every project.
 3. The caller repeats the exact project/date confirmation issued by `prepare_weekly_update_submission`.
 4. The payload has been mapped from `get_weekly_import_schema`, rather than guessed.
 
@@ -52,7 +52,7 @@ curl http://localhost:8080/health
 # {"status":"ok","server":"ebuilder-weekly-status","writesEnabled":false}
 ```
 
-For a remote deployment, publish the container and give Vapi a TLS URL such as `https://weekly-mcp.example.com/mcp`. Set a long `MCP_API_KEY`, restrict `MCP_ALLOWED_HOSTS` to the deployment hostname, and give the server an e-Builder service account with the smallest practical project role.
+For a remote deployment, publish the container and give Vapi a TLS URL such as `https://weekly-mcp.example.com/mcp`. `MCP_API_KEY` is optional: if it is blank or omitted, `/mcp` accepts unauthenticated requests. `MCP_ALLOWED_HOSTS` is also optional: if it is blank or omitted, every Host header is accepted. A long API key and host restriction remain recommended when the service is Internet-accessible. Give the server an e-Builder service account with the smallest practical project role.
 
 ## GitHub Actions / Cloud Run deployment
 
@@ -67,7 +67,7 @@ Before the first run, add the following repository/environment configuration—n
 
 - GitHub secret `GCP_PROJECT_ID` and `GCP_SA_KEY` (matching the existing Cloud Run workflows).
 - GitHub variable `GCP_REGION` and `EBUILDER_WEEKLY_STATUS_MCP_GCP_SERVICE_ACCOUNT_EMAIL`.
-- The two Secret Manager secrets above as dotenv documents. Each must include `MCP_API_KEY` and either `EBUILDER_ACCESS_TOKEN` or both `EBUILDER_USERNAME` and `EBUILDER_PASSWORD`; start with `EBUILDER_WRITES_ENABLED=false`.
+- The two Secret Manager secrets above as dotenv documents. Each must include either `EBUILDER_ACCESS_TOKEN` or both `EBUILDER_USERNAME` and `EBUILDER_PASSWORD`; `MCP_API_KEY` is optional. Start with `EBUILDER_WRITES_ENABLED=false`.
 - Artifact Registry repositories/path permissions for `ebuilder/dev` and `ebuilder/prod`, plus Cloud Run deploy and Secret Manager access for the GitHub service account.
 
 The workflows run the typecheck and tests, build and push a Docker image, deploy it, then check `/health`. They do not call e-Builder during deployment.
@@ -79,7 +79,7 @@ Vapi's MCP integration connects to a Streamable HTTP endpoint and imports the se
 1. Create **Tools → MCP**.
 2. Name it `eBuilder Weekly Status`.
 3. Set **Server URL** to `https://YOUR_DOMAIN/mcp`.
-4. Add header `Authorization: Bearer YOUR_MCP_API_KEY`.
+4. If `MCP_API_KEY` is configured, add header `Authorization: Bearer YOUR_MCP_API_KEY`; otherwise, do not add an Authorization header.
 5. Add the MCP tool to your assistant and publish it.
 
 Equivalent assistant-model fragment:
@@ -133,8 +133,8 @@ Important rules:
 2. Leave `EBUILDER_WRITES_ENABLED=false` while testing project lookup, instance lookup, and voice interviews.
 3. Call `get_weekly_import_schema` to determine the precise `data[]` payload convention for BWPUP.
 4. Make one explicitly authorised scratch submission; confirm whether it merely imports fields or advances the workflow. Record the resulting instance ID and state.
-5. Add only that scratch GUID to `EBUILDER_ALLOWED_WRITE_PROJECT_IDS`, enable writes temporarily, and test the confirmation gate.
-6. Do not add production project IDs until the result is approved by the e-Builder process owner.
+5. Optionally add only that scratch GUID to `EBUILDER_ALLOWED_WRITE_PROJECT_IDS`, enable writes temporarily, and test the confirmation gate. An empty allowlist permits every project.
+6. Do not enable production writes until the result is approved by the e-Builder process owner.
 
 ## Architecture
 

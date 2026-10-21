@@ -23,6 +23,11 @@ function csv(value: string | undefined): string[] {
   return value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
 }
 
+function optionalValue(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed || undefined;
+}
+
 export function loadConfig(): AppConfig {
   const parsed = configurationSchema.safeParse({
     baseUrl: process.env.EBUILDER_BASE_URL,
@@ -32,7 +37,7 @@ export function loadConfig(): AppConfig {
     processPrefix: process.env.EBUILDER_WEEKLY_PROCESS_PREFIX,
     processResource: process.env.EBUILDER_WEEKLY_PROCESS_RESOURCE,
     port: process.env.PORT,
-    mcpApiKey: process.env.MCP_API_KEY,
+    mcpApiKey: optionalValue(process.env.MCP_API_KEY),
     allowedHosts: csv(process.env.MCP_ALLOWED_HOSTS),
     writesEnabled: process.env.EBUILDER_WRITES_ENABLED === "true",
     allowedWriteProjectIds: csv(process.env.EBUILDER_ALLOWED_WRITE_PROJECT_IDS),
@@ -40,9 +45,6 @@ export function loadConfig(): AppConfig {
   if (!parsed.success) throw new Error(`Invalid configuration: ${parsed.error.message}`);
   if (!parsed.data.accessToken && (!parsed.data.username || !parsed.data.password)) {
     throw new Error("Set EBUILDER_ACCESS_TOKEN or EBUILDER_USERNAME and EBUILDER_PASSWORD.");
-  }
-  if (parsed.data.writesEnabled && parsed.data.allowedWriteProjectIds.length === 0) {
-    throw new Error("EBUILDER_ALLOWED_WRITE_PROJECT_IDS is required when writes are enabled.");
   }
   return parsed.data;
 }

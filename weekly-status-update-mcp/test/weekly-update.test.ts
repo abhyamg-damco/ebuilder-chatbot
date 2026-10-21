@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cleanFormFields, confirmationSentence, isValidWeeklyDate, isWriteProjectAllowed } from "../src/weekly-update.js";
+import { parseAllowedHosts } from "../src/config.js";
+import { cleanFormFields, confirmationSentence, isValidWeeklyDate, isWriteProjectAllowed, projectMatchScore, projectSearchPatterns } from "../src/weekly-update.js";
 
 test("removes e-Builder HTML section artefacts but preserves ordinary form fields", () => {
   assert.deepEqual(cleanFormFields([
@@ -27,4 +28,21 @@ test("an empty write allowlist permits every project while a populated list rest
   assert.equal(isWriteProjectAllowed([], "any-project"), true);
   assert.equal(isWriteProjectAllowed(["project-a"], "project-a"), true);
   assert.equal(isWriteProjectAllowed(["project-a"], "project-b"), false);
+});
+
+test("builds bounded LIKE-search variants for a spoken project reference", () => {
+  const patterns = projectSearchPatterns("Kanija Taneja testing");
+  assert.deepEqual(patterns.map(({ value }) => value), ["Kanija Taneja testing", "kanija%taneja%testing", "kanija", "taneja", "testing", "test"]);
+  assert.ok(patterns.length <= 6);
+});
+
+test("ranks a minor spoken spelling error above unrelated project names", () => {
+  assert.ok(projectMatchScore("Kanija Taneja testing", "Kanika Taneja Test Project") > 0.75);
+  assert.ok(projectMatchScore("Kanija Taneja testing", "Elevators Amsterdam") < 0.4);
+});
+
+test("treats an empty or wildcard host allowlist as unrestricted", () => {
+  assert.deepEqual(parseAllowedHosts(undefined), []);
+  assert.deepEqual(parseAllowedHosts("*"), []);
+  assert.deepEqual(parseAllowedHosts("weekly.example.com, mcp.example.com"), ["weekly.example.com", "mcp.example.com"]);
 });

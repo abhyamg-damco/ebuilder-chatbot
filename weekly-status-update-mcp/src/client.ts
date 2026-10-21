@@ -1,5 +1,6 @@
 import axios, { type AxiosError, type AxiosRequestConfig, type Method } from "axios";
 import type { AppConfig } from "./config.js";
+import { logEvent, safeErrorFields } from "./logger.js";
 
 interface TokenCache { value: string; expiresAt: number }
 
@@ -13,6 +14,10 @@ export class EBuilderClient {
     params?: Record<string, string | number | boolean | undefined>;
     retry?: boolean;
   } = {}): Promise<T> {
+    const startedAt = Date.now();
+    // Deliberately do not log request bodies: they can contain update text,
+    // credentials, or other project data.
+    logEvent("info", "ebuilder_api_request_started", { method, path, params: cleanParams(options.params) ?? {} });
     try {
       const response = await axios.request<T>({
         method,
@@ -25,9 +30,16 @@ export class EBuilderClient {
           ...(options.data === undefined ? {} : { "Content-Type": "application/json" }),
         },
       } satisfies AxiosRequestConfig);
+      logEvent("info", "ebuilder_api_request_completed", {
+        method, path, status: response.status, durationMs: Date.now() - startedAt,
+      });
       return response.data;
     } catch (error) {
       const apiError = error as AxiosError;
+      logEvent("error", "ebuilder_api_request_failed", {
+        method, path, status: apiError.response?.status ?? null, durationMs: Date.now() - startedAt,
+        ...safeErrorFields(apiError),
+      });
       if (apiError.response?.status === 401 && !this.config.accessToken && options.retry !== false) {
         this.tokenCache = undefined;
         return this.request<T>(method, path, { ...options, retry: false });
@@ -49,10 +61,19 @@ export class EBuilderClient {
     const body = new URLSearchParams({
       grant_type: "password", username: this.config.username!, password: this.config.password!,
     });
-    const result = await axios.post<{ access_token: string; expires_in: number }>(
-      `${this.config.baseUrl}/api/v2/Authenticate`, body.toString(),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" } },
-    );
+    const startedAt = Date.now();
+    logEvent("info", "ebuilder_auth_requested", { method: "POST", path: "/api/v2/Authenticate" });
+    let result: { data: { access_token: string; expires_in: number } };
+    try {
+      result = await axios.post<{ access_token: string; expires_in: number }>(
+        `${this.config.baseUrl}/api/v2/Authenticate`, body.toString(),
+        { headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" } },
+      );
+    } catch (error) {
+      logEvent("error", "ebuilder_auth_failed", { durationMs: Date.now() - startedAt, ...safeErrorFields(error) });
+      throw error;
+    }
+    logEvent("info", "ebuilder_auth_completed", { durationMs: Date.now() - startedAt });
     this.tokenCache = { value: result.data.access_token, expiresAt: Date.now() + result.data.expires_in * 1000 };
     return this.tokenCache.value;
   }

@@ -1,0 +1,123 @@
+name: Deploy Weekly Status MCP to Cloud Run (Production)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/main-deploy-weekly-status-mcp.yml
+      - .github/workflows/scripts/cloud-run-env-from-dotenv.py
+      - weekly-status-update-mcp/**
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy-weekly-status-mcp-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGION: ${{ vars.GCP_REGION }}
+  SERVICE_NAME: prod-ebuilder-weekly-status-mcp
+  SERVICE_ACCOUNT: ${{ vars.EBUILDER_WEEKLY_STATUS_MCP_GCP_SERVICE_ACCOUNT_EMAIL }}
+  SECRET_NAME: PROD-EBUILDER-WEEKLY-STATUS-MCP
+  IMAGE_NAME: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/ebuilder/prod/prod-ebuilder-weekly-status-mcp
+  CLOUD_RUN_PORT: "8080"
+
+jobs:
+  test-build-publish-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment: prod-chatbot
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: weekly-status-update-mcp/package-lock.json
+
+      - name: Test MCP server
+        working-directory: weekly-status-update-mcp
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm test
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+
+      - name: Create Cloud Run environment file
+        run: |
+          set -euo pipefail
+          gcloud secrets versions access latest --secret="$SECRET_NAME" --out-file=/tmp/weekly-status.env
+          test -s /tmp/weekly-status.env
+          python3 .github/workflows/scripts/cloud-run-env-from-dotenv.py \
+            /tmp/weekly-status.env /tmp/weekly-status-cloud-run-env.yaml
+          test -s /tmp/weekly-status-cloud-run-env.yaml
+          for key in MCP_API_KEY EBUILDER_ACCESS_TOKEN EBUILDER_USERNAME EBUILDER_PASSWORD; do
+            if grep -q "^${key}:" /tmp/weekly-status-cloud-run-env.yaml; then
+              echo "${key} is configured"
+            fi
+          done
+          if ! grep -q '^MCP_API_KEY:' /tmp/weekly-status-cloud-run-env.yaml; then
+            echo '::error::MCP_API_KEY is required in the deployment secret.'
+            exit 1
+          fi
+          if ! grep -q '^EBUILDER_ACCESS_TOKEN:' /tmp/weekly-status-cloud-run-env.yaml \
+            && ! { grep -q '^EBUILDER_USERNAME:' /tmp/weekly-status-cloud-run-env.yaml && grep -q '^EBUILDER_PASSWORD:' /tmp/weekly-status-cloud-run-env.yaml; }; then
+            echo '::error::Set EBUILDER_ACCESS_TOKEN or both EBUILDER_USERNAME and EBUILDER_PASSWORD in the deployment secret.'
+            exit 1
+          fi
+
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          docker build \
+            --file weekly-status-update-mcp/Dockerfile \
+            --tag "$IMAGE_NAME:${{ github.sha }}" \
+            weekly-status-update-mcp
+
+      - name: Authenticate Docker to Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Push Docker image
+        run: docker push "$IMAGE_NAME:${{ github.sha }}"
+
+      - name: Deploy to Cloud Run
+        run: |
+          set -euo pipefail
+          gcloud run deploy "$SERVICE_NAME" \
+            --image "$IMAGE_NAME:${{ github.sha }}" \
+            --platform managed \
+            --region "$REGION" \
+            --allow-unauthenticated \
+            --port "$CLOUD_RUN_PORT" \
+            --service-account="$SERVICE_ACCOUNT" \
+            --env-vars-file=/tmp/weekly-status-cloud-run-env.yaml \
+            --memory=512Mi \
+            --cpu=1 \
+            --min-instances=0 \
+            --max-instances=3 \
+            --timeout=300s \
+            --quiet
+
+      - name: Verify deployment
+        run: |
+          set -euo pipefail
+          service_url="$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')"
+          curl --fail --silent --show-error --retry 3 "$service_url/health"
+          echo "::notice::Weekly Status MCP deployed: $service_url/mcp"

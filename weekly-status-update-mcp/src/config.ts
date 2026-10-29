@@ -23,6 +23,12 @@ function csv(value: string | undefined): string[] {
   return value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
 }
 
+export function parseAllowedHosts(value: string | undefined): string[] {
+  const values = csv(value);
+  // An omitted list or explicit * both intentionally mean unrestricted.
+  return values.includes("*") ? [] : values;
+}
+
 function optionalValue(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed || undefined;
@@ -38,7 +44,7 @@ export function loadConfig(): AppConfig {
     processResource: process.env.EBUILDER_WEEKLY_PROCESS_RESOURCE,
     port: process.env.PORT,
     mcpApiKey: optionalValue(process.env.MCP_API_KEY),
-    allowedHosts: csv(process.env.MCP_ALLOWED_HOSTS),
+    allowedHosts: parseAllowedHosts(process.env.MCP_ALLOWED_HOSTS),
     writesEnabled: process.env.EBUILDER_WRITES_ENABLED === "true",
     allowedWriteProjectIds: csv(process.env.EBUILDER_ALLOWED_WRITE_PROJECT_IDS),
   });

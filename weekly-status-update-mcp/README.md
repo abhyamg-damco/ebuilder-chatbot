@@ -16,7 +16,7 @@ It was built from the supplied process map, Loom, and UI screenshot. The workflo
 
 | Tool | Purpose | Writes? |
 |---|---|---|
-| `find_weekly_update_project` | Match a project from a spoken name (returns the tenant's `PortalId`) | No |
+| `find_weekly_update_project` | Match a spoken, partial, or slightly misspelled project name; runs bounded `LIKE` variants and locally ranks candidates | No |
 | `list_weekly_updates` | List BWPUP instances for that project/date | No |
 | `get_weekly_update_form` | Get workflow state, comments, and form values | No |
 | `prepare_weekly_update_submission` | Validate/update summary and generate required confirmation | No |
@@ -52,7 +52,22 @@ curl http://localhost:8080/health
 # {"status":"ok","server":"ebuilder-weekly-status","writesEnabled":false}
 ```
 
-For a remote deployment, publish the container and give Vapi a TLS URL such as `https://weekly-mcp.example.com/mcp`. `MCP_API_KEY` is optional: if it is blank or omitted, `/mcp` accepts unauthenticated requests. `MCP_ALLOWED_HOSTS` is also optional: if it is blank or omitted, every Host header is accepted. A long API key and host restriction remain recommended when the service is Internet-accessible. Give the server an e-Builder service account with the smallest practical project role.
+## Logs and MCP prompts
+
+Cloud Run receives JSON logs on stdout/stderr. They include request path/status/duration, a Vapi `X-Call-Id` when supplied, every MCP tool start/completion/failure, and e-Builder API method/path/status/duration. They intentionally exclude credentials, Authorization headers, import payloads, confirmation text, and free-form weekly-update values.
+
+Set `MCP_LOG_LEVEL` to `debug`, `info` (default), `warn`, or `error`.
+
+The server also exposes MCP-native prompts:
+
+| Prompt | Purpose |
+|---|---|
+| `weekly_update_voice_workflow` | Safe end-to-end BWPUP voice workflow. |
+| `resolve_spoken_project` | Project-resolution guidance for a partial or misspelled spoken name. |
+
+e-Builder's project query supports `LIKE`, not regular expressions. For a phrase such as `Kanija Taneja testing`, the server makes only a bounded set of searches: the original phrase, all-token pattern, meaningful individual words, and a simple word stem such as `test`. It then ranks returned names locally. The assistant must always ask the caller to choose; fuzzy scoring never authorizes an automatic selection.
+
+For a remote deployment, publish the container and give Vapi a TLS URL such as `https://weekly-mcp.example.com/mcp`. `MCP_API_KEY` is optional: if it is blank or omitted, `/mcp` accepts unauthenticated requests. `MCP_ALLOWED_HOSTS` is also optional: an empty value **or `*`** accepts every Host header. A comma-separated list restricts it to exact hostnames. A long API key and host restriction remain recommended when the service is Internet-accessible. Give the server an e-Builder service account with the smallest practical project role.
 
 ## GitHub Actions / Cloud Run deployment
 
@@ -111,7 +126,7 @@ Scope: help only with weekly/BWPUP project updates. Do not answer unrelated cons
 
 Workflow:
 1. Start by asking for the project name or project number and the intended report date. Convert a spoken date to YYYY-MM-DD.
-2. Call find_weekly_update_project. If there are multiple matches, say the names and ask the caller to choose. Do not guess a project.
+2. Call find_weekly_update_project once, even when the spoken name is partial or slightly misspelled. It runs bounded LIKE variants and ranks candidates. Read the names and ask the caller to choose; do not guess a project or auto-select a fuzzy match.
 3. Call list_weekly_updates with the chosen official project name and date. If no record is found, explain that the process instance needs to be created or selected in e-Builder; do not invent one.
 4. Call get_weekly_update_form for the selected instance before asking any data questions. Use its existing values only as context; never silently copy a previous-period value into the new update.
 5. Gather only the relevant current-period fields, one at a time: overall update/comments, construction percentage, completed activities, upcoming stakeholder meeting, delays and remediation, vendor instructions, schedule changes, risks, and mitigations. Confirm dates, numbers, names, and percentages back to the caller.

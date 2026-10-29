@@ -90,6 +90,8 @@ Each of the 14 tools is registered via `server.registerPrompt()` with Postman-de
 
 MCP **discovers** documents (`search_documents`, `get_invoice_document`) and returns `fileId` + signed `downloadUrl`. The **host chatbot** downloads bytes and extracts text for agent Q&A.
 
+Signed URLs carry `X-Amz-Expires=1800`, so they stop working after 30 minutes. A stored URL is not reusable across a session; call `search_documents` with `fileId` to mint a fresh one. The download itself needs no credentials, only the lookup does.
+
 | Doc | Description |
 |-----|-------------|
 | [docs/unified-document-access.md](./docs/unified-document-access.md) | MCP role, tool output format, host integration |

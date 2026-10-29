@@ -56,7 +56,8 @@ Returns flags with severity, $ impact, and citations. Advisory only — never au
 Returns fileName, fileId, downloadUrl, fileUrl, renderPath, contentType, previewable.
 NEVER fabricate document content — use fileUrl + metadata.fileId in createDocument(file-preview) for inline preview via render API.
 Host chatbot extracts document text into Linked e-Builder documents; use getLinkedDocuments for content Q&A.
-Use after resolve_project or with fileNamePattern/invoiceNumber (LIKE, e.g. %invoice% or %006%).`,
+Use after resolve_project or with fileNamePattern/invoiceNumber (LIKE, e.g. %invoice% or %006%).
+Pass fileId to fetch one known document with a freshly signed downloadUrl; signed URLs expire after 30 minutes, so a stored one is not reusable.`,
 
   get_invoice_document: `PREFERRED when user asks to show, open, view, or preview an invoice document/PDF/image.
 Orchestrates: resolve_project → CommitmentInvoices lookup → search_documents with invoice number patterns.

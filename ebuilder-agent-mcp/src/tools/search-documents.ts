@@ -28,11 +28,19 @@ function extractRecords(data: unknown): JsonRecord[] {
   );
 }
 
+/**
+ * e-Builder rejects `EQ` on Documents/Query with
+ * `400 Invalid filter operation (EQ) encountered`. Exact match is the bare
+ * `=` sign, verified against the tenant.
+ */
+const EXACT_MATCH = "=";
+
 export type SearchDocumentsInput = {
   projectSearchTerm?: string;
   fileNamePattern?: string;
   invoiceNumber?: string;
   documentType?: string;
+  fileId?: string;
   limit?: number;
 };
 
@@ -59,7 +67,25 @@ export async function searchDocuments(
       ? invoiceNumberFilePattern(input.invoiceNumber)
       : undefined);
 
-  if (input.projectSearchTerm) {
+  /**
+   * A FileId identifies one document outright, so it skips project resolution
+   * and every other filter.
+   *
+   * This is the path the host uses to mint a fresh download URL. The signed
+   * URLs e-Builder returns carry `X-Amz-Expires=1800`, so they die after
+   * thirty minutes, which is shorter than the gap between someone opening a
+   * chat and coming back to it. A stored URL is therefore not worth trusting
+   * and the document has to be looked up again by id.
+   */
+  if (input.fileId) {
+    filters.push({
+      Field: "Document/FileId",
+      Operation: EXACT_MATCH,
+      Value: input.fileId,
+    });
+  }
+
+  if (!input.fileId && input.projectSearchTerm) {
     steps.push(`resolve_project("${input.projectSearchTerm}")`);
     const projectResult = await searchProjects(
       client,
@@ -78,7 +104,7 @@ export async function searchDocuments(
     }
   }
 
-  if (fileNamePattern) {
+  if (!input.fileId && fileNamePattern) {
     filters.push({
       Field: "Document/FileName",
       Operation: "LIKE",
@@ -88,7 +114,7 @@ export async function searchDocuments(
     });
   }
 
-  if (input.documentType) {
+  if (!input.fileId && input.documentType) {
     filters.push({
       Field: "Document/DocumentType",
       Operation: "LIKE",
@@ -104,7 +130,7 @@ export async function searchDocuments(
       documents: [],
       stepsCompleted: steps,
       nextSteps: [
-        "Provide projectSearchTerm and/or fileNamePattern or invoiceNumber",
+        "Provide fileId for an exact document, or projectSearchTerm and/or fileNamePattern or invoiceNumber to search",
       ],
       agentDirective:
         "Ask the user for project and invoice/document name before searching Documents.",
@@ -113,7 +139,7 @@ export async function searchDocuments(
 
   steps.push("query_records(Documents)");
   const path = buildQueryPath("Documents");
-  const pageSize = Math.min(input.limit ?? 20, 50);
+  const pageSize = input.fileId ? 1 : Math.min(input.limit ?? 20, 50);
   const params = buildQueryParams({ schema: false, pageNumber: 0, pageSize });
   const body = {
     SelectedFields: [
@@ -163,6 +189,12 @@ export function registerSearchDocumentsTool(
     {
       description: TOOL_GUIDES.search_documents,
       inputSchema: {
+        fileId: z
+          .string()
+          .optional()
+          .describe(
+            "Exact Document/FileId. Returns that one document with a freshly signed downloadUrl, ignoring every other filter"
+          ),
         projectSearchTerm: z
           .string()
           .optional()
@@ -193,6 +225,7 @@ export function registerSearchDocumentsTool(
     async (args) => {
       try {
         const result = await searchDocuments(client, {
+          fileId: args.fileId as string | undefined,
           projectSearchTerm: args.projectSearchTerm as string | undefined,
           fileNamePattern: args.fileNamePattern as string | undefined,
           invoiceNumber: args.invoiceNumber as string | undefined,

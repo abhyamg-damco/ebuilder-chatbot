@@ -5,6 +5,7 @@ import { Toaster } from "sonner";
 import { AppSidebar } from "@/components/chat/app-sidebar";
 import { AgentActivityProvider } from "@/components/chat/agent-activity-provider";
 import { ChatLayoutGate } from "@/components/chat/chat-layout-gate";
+import { VapiFloatingAssistantLoader } from "@/components/vapi/vapi-floating-assistant-loader";
 import { DataStreamProvider } from "@/components/chat/data-stream-provider";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { ActiveChatProvider } from "@/hooks/use-active-chat";
@@ -46,6 +47,7 @@ async function SidebarShell({ children }: { children: React.ReactNode }) {
           <AgentActivityProvider>
             <ActiveChatProvider>
               <ChatLayoutGate>{children}</ChatLayoutGate>
+              <VapiFloatingAssistantLoader />
             </ActiveChatProvider>
           </AgentActivityProvider>
         </Suspense>

@@ -19,12 +19,11 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use((req, res, next) => {
-  if (!config.allowedHosts.length || config.allowedHosts.includes(req.hostname)) return next();
-  res.status(403).json({ jsonrpc: "2.0", error: { code: -32000, message: "Invalid Host header" }, id: null });
-});
-
 app.use("/mcp", (req, res, next) => {
+  if (config.allowedHosts.length && !config.allowedHosts.includes(req.hostname)) {
+    res.status(403).json({ jsonrpc: "2.0", error: { code: -32000, message: "Invalid Host header" }, id: null });
+    return;
+  }
   if (config.mcpApiKey && req.headers.authorization !== `Bearer ${config.mcpApiKey}`) {
     res.status(401).json({ jsonrpc: "2.0", error: { code: -32001, message: "Unauthorized" }, id: null });
     return;

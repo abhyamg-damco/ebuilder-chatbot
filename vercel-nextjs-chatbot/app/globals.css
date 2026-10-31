@@ -631,3 +631,63 @@ textarea:focus-visible {
 [data-testid="artifact"] {
   isolation: isolate;
 }
+
+/* Vapi widget: contain SDK fixed layout inside the top-right card (hybrid uses 384×512px by default). */
+.vapi-weekly-status-widget-host {
+  box-sizing: border-box;
+}
+
+.vapi-weekly-status-widget-host *,
+.vapi-weekly-status-widget-host *::before,
+.vapi-weekly-status-widget-host *::after {
+  box-sizing: border-box;
+  max-width: 100%;
+}
+
+.vapi-weekly-status-widget-host .vapi-widget-wrapper {
+  position: relative;
+  width: 100%;
+  max-width: 100%;
+  min-height: 0;
+}
+
+.vapi-weekly-status-widget-host .vapi-widget-wrapper > div {
+  position: relative !important;
+  inset: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  transform: none !important;
+  z-index: 1 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+/* Expanded panel (compact hybrid defaults to 24rem × 32rem inline sizes). */
+.vapi-weekly-status-widget-host .vapi-widget-wrapper > div > div {
+  width: 100% !important;
+  max-width: 100% !important;
+  height: auto !important;
+  max-height: min(22rem, calc(100dvh - 6.5rem)) !important;
+  min-height: 0 !important;
+}
+
+.vapi-weekly-status-widget-host .vapi-conversation-area {
+  flex: 1 1 auto !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+}
+
+.vapi-weekly-status-widget-host .vapi-widget-wrapper > div > div > button,
+.vapi-weekly-status-widget-host .vapi-widget-wrapper > div > button {
+  width: 100% !important;
+  max-width: 100% !important;
+}
+
+.vapi-weekly-status-widget-host .vapi-widget-wrapper input {
+  min-width: 0 !important;
+  width: 100% !important;
+  max-width: 100% !important;
+}
